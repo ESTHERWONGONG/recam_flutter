@@ -1,126 +1,160 @@
 import Flutter
 import UIKit
-import AVFoundation
 
+// --------------------------------------------------
+// 1. 插件入口：兼任“AI 广播站”
+// --------------------------------------------------
 public class RecamNativeCameraPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
-
-    // 方法通道（给 Dart 调用）
-    private var methodChannel: FlutterMethodChannel?
-
-    // 事件通道（给 Dart 发送 AI 推荐等信息）
-    private var eventSink: FlutterEventSink?
+    
+    // 全局静态变量，用来存 Flutter 的监听器
+    // 这样不管相机 View 什么时候创建，都可以往这里发数据
+    public static var aiEventSink: FlutterEventSink?
 
     public static func register(with registrar: FlutterPluginRegistrar) {
-        // ⚠️ 通道名要和 Dart 里的完全一致：
-        // MethodChannel('recam_native_camera/methods')
-        let methodChannel = FlutterMethodChannel(
-            name: "recam_native_camera/methods",
-            binaryMessenger: registrar.messenger()
-        )
-
-        // EventChannel('recam_native_camera/ai_stream')
-        let eventChannel = FlutterEventChannel(
-            name: "recam_native_camera/ai_stream",
-            binaryMessenger: registrar.messenger()
-        )
-
+        // A. 注册视图工厂
+        let factory = RecamCameraFactory(messenger: registrar.messenger())
+        registrar.register(factory, withId: "recam_native_camera_view")
+        
+        // B. 注册 AI 事件通道 (放在这里注册，保证 App 一启动就有信号)
+        let eventChannel = FlutterEventChannel(name: "recam_native_camera/ai_stream", binaryMessenger: registrar.messenger())
         let instance = RecamNativeCameraPlugin()
-        instance.methodChannel = methodChannel
-
-        registrar.addMethodCallDelegate(instance, channel: methodChannel)
         eventChannel.setStreamHandler(instance)
     }
+    
+    // MARK: - FlutterStreamHandler (Flutter 开始监听时调用)
+    public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+        // 把 Flutter 的耳朵存起来
+        RecamNativeCameraPlugin.aiEventSink = events
+        print("📡 Swift Plugin: Flutter 已经连接上 AI 信号塔")
+        return nil
+    }
 
-    // MARK: - FlutterPlugin
+    public func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        RecamNativeCameraPlugin.aiEventSink = nil
+        print("📡 Swift Plugin: Flutter 断开了 AI 信号塔")
+        return nil
+    }
+}
 
-    public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+// --------------------------------------------------
+// 2. 工厂类
+// --------------------------------------------------
+class RecamCameraFactory: NSObject, FlutterPlatformViewFactory {
+    private var messenger: FlutterBinaryMessenger
+
+    init(messenger: FlutterBinaryMessenger) {
+        self.messenger = messenger
+        super.init()
+    }
+
+    func create(
+        withFrame frame: CGRect,
+        viewIdentifier viewId: Int64,
+        arguments args: Any?
+    ) -> FlutterPlatformView {
+        return RecamNativeCameraView(
+            frame: frame,
+            viewIdentifier: viewId,
+            arguments: args,
+            messenger: messenger
+        )
+    }
+}
+
+// --------------------------------------------------
+// 3. 视图类：只负责发数据，不负责建通道
+// --------------------------------------------------
+class RecamNativeCameraView: NSObject, FlutterPlatformView, CameraViewControllerDelegate {
+    
+    private var _view: UIView
+    private var _controller: CameraViewController
+    private var _methodChannel: FlutterMethodChannel
+
+    init(
+        frame: CGRect,
+        viewIdentifier viewId: Int64,
+        arguments args: Any?,
+        messenger: FlutterBinaryMessenger
+    ) {
+        _view = UIView(frame: frame)
+        _controller = CameraViewController()
+        
+        // 方法通道还是放在这里，因为它控制具体的相机实例
+        _methodChannel = FlutterMethodChannel(name: "recam_native_camera/methods", binaryMessenger: messenger)
+        
+        super.init()
+
+        _controller.view.frame = _view.bounds
+        _controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        _view.addSubview(_controller.view)
+        
+        _controller.delegate = self
+        _methodChannel.setMethodCallHandler(handle)
+    }
+
+    func view() -> UIView {
+        return _view
+    }
+
+    // 处理 Flutter 命令
+    func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
-
         case "takePhoto":
-            takePhoto(result: result)
-
+            _controller.capturePhoto()
+            result(nil)
+            
         case "switchCamera":
-            switchCamera(result: result)
-
-        case "setAspectRatio":
-            if let args = call.arguments as? [String: Any],
-               let aspect = args["aspect"] as? String {
-                setAspectRatio(aspect: aspect, result: result)
-            } else {
-                result(FlutterError(code: "INVALID_ARGS",
-                                    message: "Missing aspect",
-                                    details: nil))
-            }
-
+            _controller.switchCamera(isFront: false) // 简易切换
+            result(nil)
+            
         case "setFlashMode":
             if let args = call.arguments as? [String: Any],
-               let mode = args["mode"] as? String {
-                setFlashMode(mode: mode, result: result)
-            } else {
-                result(FlutterError(code: "INVALID_ARGS",
-                                    message: "Missing flash mode",
-                                    details: nil))
+               let modeStr = args["mode"] as? String {
+                let modeIndex = (modeStr == "on" ? 2 : (modeStr == "auto" ? 1 : 0))
+                _controller.updateFlashMode(modeIndex: modeIndex)
             }
+            result(nil)
+            
+        case "setZoom":
+             if let args = call.arguments as? [String: Any],
+                let zoom = args["zoom"] as? Double {
+                 _controller.setZoomFactor(CGFloat(zoom))
+             }
+             result(nil)
 
+        case "setAspectRatio":
+            print("⚠️ setAspectRatio stub")
+            result(nil)
+            
         case "setQuality":
-            if let args = call.arguments as? [String: Any],
-               let quality = args["quality"] as? String {
-                setQuality(quality: quality, result: result)
-            } else {
-                result(FlutterError(code: "INVALID_ARGS",
-                                    message: "Missing quality",
-                                    details: nil))
-            }
-
-        // 预留一个基础测试方法
-        case "getPlatformVersion":
-            result("iOS " + UIDevice.current.systemVersion)
+            print("⚠️ setQuality stub")
+            result(nil)
 
         default:
             result(FlutterMethodNotImplemented)
         }
     }
-
-    // MARK: - FlutterStreamHandler（AI 事件通道）
-
-    public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
-        self.eventSink = events
-        print("AI event stream onListen")
-        // 现在先不推数据，未来在这里发送 AI 推荐
-        return nil
+    
+    // MARK: - 引擎回调
+    
+    func cameraViewController(_ controller: CameraViewController, didCapture image: UIImage) {
+        print("✅ Swift Plugin: 拍到照片！尺寸 \(image.size)")
     }
-
-    public func onCancel(withArguments arguments: Any?) -> FlutterError? {
-        self.eventSink = nil
-        print("AI event stream onCancel")
-        return nil
+    
+    func cameraViewController(_ controller: CameraViewController, didFail error: Error) {
+        print("❌ Swift Plugin: 报错 \(error)")
     }
-
-    // MARK: - 相机相关（先空实现，保证不崩）
-
-    private func takePhoto(result: FlutterResult) {
-        print("takePhoto() called (stub)")
-        // TODO: 这里以后接真实拍照逻辑，并返回图片路径
-        result("") // 现在 Dart 那边会拿到空字符串
-    }
-
-    private func switchCamera(result: FlutterResult) {
-        print("switchCamera() called (stub)")
-        result(nil)
-    }
-
-    private func setAspectRatio(aspect: String, result: FlutterResult) {
-        print("setAspectRatio() called with aspect = \(aspect)")
-        result(nil)
-    }
-
-    private func setFlashMode(mode: String, result: FlutterResult) {
-        print("setFlashMode() called with mode = \(mode)")
-        result(nil)
-    }
-
-    private func setQuality(quality: String, result: FlutterResult) {
-        print("setQuality() called with quality = \(quality)")
-        result(nil)
+    
+    func cameraViewController(_ controller: CameraViewController, didUpdateLiveRecommendation result: AiRecommendResult) {
+        // 【关键改动】这里直接往全局 Sink 发送数据
+        guard let sink = RecamNativeCameraPlugin.aiEventSink else { return }
+        
+        let data: [String: Any] = [
+            "filmId": result.preset.id,
+            "message": result.debugText,
+            "score": 0.9,
+            "sceneType": "general"
+        ]
+        sink(data)
     }
 }

@@ -1,8 +1,7 @@
-import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-
-import '../gallery/gallery_screen.dart';
-import '../settings/settings_screen.dart';
+import 'package:flutter/services.dart';
+import '../../services/native_camera_service.dart'; 
+import '../../models/ai_recommendation.dart'; // 👈 必须引入这个，才能看懂 AI 数据
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -13,428 +12,220 @@ class CameraScreen extends StatefulWidget {
 }
 
 class _CameraScreenState extends State<CameraScreen> {
-  List<CameraDescription> _cameras = [];
-  CameraController? _controller;
-  Future<void>? _initFuture;
-
-  // UI 状态：闪光 / 画幅比例 / 是否展示滤镜面板
-  FlashMode _flashMode = FlashMode.off;
-  double _aspectRatio = 3 / 4; // 3:4 默认
-  bool _showFilterPanel = false;
+  // 状态变量
+  bool _isFilterMode = false;
+  String _flashMode = "off";
+  
+  // AI 数据流
+  Stream<AiRecommendation>? _aiStream;
+  
+  // 为了保持 Service 实例稳定，我们在 State 里持有一个
+  final NativeCameraService _cameraService = NativeCameraService();
 
   @override
   void initState() {
     super.initState();
-    _initCamera();
-  }
-
-  Future<void> _initCamera({CameraLensDirection preferred = CameraLensDirection.back}) async {
-    try {
-      _cameras = await availableCameras();
-
-      // 找到指定方向的镜头，找不到就用第一个
-      CameraDescription camera = _cameras.first;
-      final candidates = _cameras.where((c) => c.lensDirection == preferred);
-      if (candidates.isNotEmpty) {
-        camera = candidates.first;
-      }
-
-      final controller = CameraController(
-        camera,
-        ResolutionPreset.high,
-        enableAudio: false,
-      );
-
-      await controller.initialize();
-      await controller.setFlashMode(_flashMode);
-
-      _controller?.dispose();
-      _controller = controller;
-      _initFuture = Future.value();
-
-      if (mounted) {
-        setState(() {});
-      }
-    } catch (e) {
-      debugPrint('initCamera error: $e');
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  Future<void> _onCapture() async {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
-
-    try {
-      final file = await controller.takePicture();
-      if (!mounted) return;
-
-      // ✅ 按你的流程：拍完 → 进入 Gallery，而不是 Filter
-      Navigator.pushNamed(
-        context,
-        GalleryScreen.route,
-        arguments: file.path,
-      );
-    } catch (e) {
-      debugPrint('takePicture error: $e');
-    }
-  }
-
-  Future<void> _toggleFlash() async {
-    final controller = _controller;
-    if (controller == null) return;
-
-    // 先用一个简单的循环：off → auto → always
-    setState(() {
-      switch (_flashMode) {
-        case FlashMode.off:
-          _flashMode = FlashMode.auto;
-          break;
-        case FlashMode.auto:
-          _flashMode = FlashMode.always;
-          break;
-        case FlashMode.always:
-        case FlashMode.torch:
-          _flashMode = FlashMode.off;
-          break;
-      }
-    });
-
-    try {
-      await controller.setFlashMode(_flashMode);
-    } catch (e) {
-      debugPrint('setFlashMode error: $e');
-    }
-  }
-
-  void _toggleAspectRatio() {
-    // 先简单：3:4 ↔ 1:1
-    setState(() {
-      if (_aspectRatio == 3 / 4) {
-        _aspectRatio = 1 / 1;
-      } else {
-        _aspectRatio = 3 / 4;
-      }
-    });
-
-    // 未来这里会调用 Swift 插件去改裁切区域，现在只影响 UI
-  }
-
-  Future<void> _switchCamera() async {
-    if (_cameras.isEmpty) return;
-
-    final current = _controller?.description;
-    if (current == null) return;
-
-    CameraLensDirection targetDirection;
-    if (current.lensDirection == CameraLensDirection.back) {
-      targetDirection = CameraLensDirection.front;
-    } else {
-      targetDirection = CameraLensDirection.back;
-    }
-
-    await _initCamera(preferred: targetDirection);
-  }
-
-  void _openSettings() {
-    Navigator.pushNamed(context, SettingsScreen.route);
-  }
-
-  void _openGallery() {
-    Navigator.pushNamed(context, GalleryScreen.route);
-  }
-
-  void _toggleFilterPanel() {
-    setState(() {
-      _showFilterPanel = !_showFilterPanel;
-    });
-  }
-
-  void _onFramePressed() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('边框功能稍后在编辑页中提供，这里只是预留入口。')),
-    );
-  }
-
-  void _onStickerPressed() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('贴纸功能稍后在编辑页中提供，这里只是预留入口。')),
-    );
-  }
-
-  IconData _flashIcon() {
-    switch (_flashMode) {
-      case FlashMode.off:
-        return Icons.flash_off;
-      case FlashMode.auto:
-        return Icons.flash_auto;
-      case FlashMode.always:
-      case FlashMode.torch:
-        return Icons.flash_on;
-    }
-  }
-
-  String _aspectLabel() {
-    if (_aspectRatio == 3 / 4) return '3:4';
-    if (_aspectRatio == 1 / 1) return '1:1';
-    return 'AR';
+    // 启动监听
+    _aiStream = _cameraService.aiStream;
   }
 
   @override
   Widget build(BuildContext context) {
-    final controller = _controller;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final viewfinderHeight = screenWidth * (4 / 3);
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
         child: Column(
           children: [
-            // 顶部画板：设置 / 闪光 / 比例 / 翻转镜头
-            _buildTopToolbar(),
+            _buildTopBar(),
 
-            // 中间：取景 3:4 区域（Live Preview）
             Expanded(
               child: Center(
-                child: AspectRatio(
-                  aspectRatio: _aspectRatio,
-                  child: Container(
-                    color: Colors.black,
-                    child: controller == null
-                        ? const Center(child: CircularProgressIndicator())
-                        : CameraPreview(controller),
+                child: SizedBox(
+                  width: screenWidth,
+                  height: viewfinderHeight,
+                  child: Stack(
+                    children: [
+                      // 1. 原生相机画面
+                      const UiKitView(
+                        viewType: 'recam_native_camera_view',
+                        layoutDirection: TextDirection.ltr,
+                        creationParams: {},
+                        creationParamsCodec: StandardMessageCodec(),
+                      ),
+
+                      // 2. AI 推荐气泡
+                      Positioned(
+                        top: 20,
+                        right: 16,
+                        child: StreamBuilder<AiRecommendation>(
+                          stream: _aiStream,
+                          builder: (context, snapshot) {
+                            // 调试用的：看看有没有数据进来
+                            if (snapshot.hasData) {
+                                print("Dart收到AI数据: ${snapshot.data?.message}");
+                            } else if (snapshot.hasError) {
+                                print("Dart收到错误: ${snapshot.error}");
+                            }
+
+                            if (!snapshot.hasData) return const SizedBox();
+                            
+                            final recommendation = snapshot.data!;
+                            // 如果消息为空，就不显示
+                            if (recommendation.message.isEmpty) return const SizedBox();
+
+                            return Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.7),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: Colors.yellowAccent.withOpacity(0.8)),
+                                boxShadow: [
+                                  BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 4)
+                                ]
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.auto_awesome, color: Colors.yellowAccent, size: 16),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    recommendation.message, 
+                                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      
+                      // 3. 变焦控制 (0.5 / 1 / 2)
+                      Positioned(
+                        bottom: 16,
+                        left: 0, right: 0,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _buildZoomBtn(0.5),
+                            const SizedBox(width: 24),
+                            _buildZoomBtn(1.0),
+                            const SizedBox(width: 24),
+                            _buildZoomBtn(2.0),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
 
-            // 底部画板：上排（边框 / 贴纸）+ 下排（相册 / 快门 / 滤镜 或 滤镜列表）
-            _buildBottomPanel(),
+            Container(
+              height: 160,
+              color: const Color(0xFF111111),
+              child: _isFilterMode ? _buildFilterPanel() : _buildCapturePanel(),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildTopToolbar() {
+  // --- 组件构建 ---
+
+  Widget _buildTopBar() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      height: 56,
-      color: Colors.black.withOpacity(0.6),
+      height: 50,
+      color: Colors.black,
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _TopIconButton(
-            label: '设置',
-            icon: Icons.settings_outlined,
-            onTap: _openSettings,
+          IconButton(icon: const Icon(Icons.settings, color: Colors.white), onPressed: () {}),
+          IconButton(
+            icon: Icon(_flashMode == 'on' ? Icons.flash_on : Icons.flash_off, color: Colors.white),
+            onPressed: () {
+              final newMode = _flashMode == 'off' ? 'auto' : (_flashMode == 'auto' ? 'on' : 'off');
+              setState(() => _flashMode = newMode);
+              _cameraService.setFlashMode(newMode);
+            },
           ),
-          _TopIconButton(
-            label: '闪光',
-            icon: _flashIcon(),
-            onTap: _toggleFlash,
-          ),
-          _TopIconButton(
-            label: _aspectLabel(),
-            icon: Icons.crop_3_2_outlined,
-            onTap: _toggleAspectRatio,
-          ),
-          _TopIconButton(
-            label: '翻转',
-            icon: Icons.cameraswitch_outlined,
-            onTap: _switchCamera,
+          const Text("3:4", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          IconButton(
+            icon: const Icon(Icons.flip_camera_ios, color: Colors.white), 
+            onPressed: () => _cameraService.switchCamera()
           ),
         ],
       ),
     );
   }
 
-  Widget _buildBottomPanel() {
-    return Container(
-      padding: const EdgeInsets.only(top: 8, bottom: 16),
-      color: Colors.black.withOpacity(0.8),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // 上排：边框 / 贴纸
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                TextButton(
-                  onPressed: _onFramePressed,
-                  child: const Text(
-                    '边框',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                ),
-                TextButton(
-                  onPressed: _onStickerPressed,
-                  child: const Text(
-                    '贴纸',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                ),
-              ],
+  Widget _buildCapturePanel() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        IconButton(icon: const Icon(Icons.photo_library, color: Colors.white, size: 32), onPressed: () {}),
+        GestureDetector(
+          onTap: () {
+            print("📸 咔嚓");
+            _cameraService.takePhoto(); 
+          },
+          child: Container(
+            width: 72, height: 72,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFFCE2029),
+              border: Border.all(color: Colors.white, width: 4),
             ),
           ),
-          const SizedBox(height: 4),
-
-          // 下排：相册 / 快门 / 滤镜  或  滤镜选择面板
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 200),
-            child: _showFilterPanel
-                ? _buildFilterPanel()
-                : _buildMainBottomBar(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMainBottomBar() {
-    return Padding(
-      key: const ValueKey('main_bar'),
-      padding: const EdgeInsets.symmetric(horizontal: 32.0, vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          // 相册
-          IconButton(
-            onPressed: _openGallery,
-            icon: const Icon(Icons.photo_library_outlined),
-            color: Colors.white,
-            iconSize: 28,
-          ),
-
-          // 快门
-          GestureDetector(
-            onTap: _onCapture,
-            child: Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 4),
-              ),
-              child: Center(
-                child: Container(
-                  width: 56,
-                  height: 56,
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          // 滤镜
-          IconButton(
-            onPressed: _toggleFilterPanel,
-            icon: const Icon(Icons.filter_vintage_outlined),
-            color: Colors.white,
-            iconSize: 28,
-          ),
-        ],
-      ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.filter_vintage, color: Colors.yellowAccent, size: 32),
+          onPressed: () => setState(() => _isFilterMode = true),
+        ),
+      ],
     );
   }
 
   Widget _buildFilterPanel() {
-    // 先做一个假滤镜列表，未来接 LUT & CoreML
-    final filters = ['原片', 'Fuji 400H', 'Portra 160', 'C200', 'BW', '自定义'];
-
-    return Container(
-      key: const ValueKey('filter_panel'),
-      height: 96,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Column(
-        children: [
-          // 顶部一行：标题 + 关闭
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                '滤镜',
-                style: TextStyle(color: Colors.white, fontSize: 16),
-              ),
-              IconButton(
-                onPressed: _toggleFilterPanel,
-                icon: const Icon(Icons.close, color: Colors.white),
-              ),
-            ],
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const Text("选择胶片", style: TextStyle(color: Colors.white)),
+        const SizedBox(height: 10),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: List.generate(5, (index) => Container(
+              margin: const EdgeInsets.all(8),
+              width: 60, height: 60,
+              color: Colors.grey[800],
+              child: Center(child: Text("C$index", style: const TextStyle(color: Colors.white))),
+            )),
           ),
-          const SizedBox(height: 4),
-          // 水平滚动滤镜选项
-          Expanded(
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: filters.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
-              itemBuilder: (context, index) {
-                final name = filters[index];
-                return GestureDetector(
-                  onTap: () {
-                    // TODO: 这里以后接真实 LUT 切换
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('切换滤镜：$name（暂为占位）')),
-                    );
-                  },
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: Colors.white),
-                    ),
-                    child: Text(
-                      name,
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.keyboard_arrow_down, color: Colors.white),
+          onPressed: () => setState(() => _isFilterMode = false),
+        )
+      ],
     );
   }
-}
 
-class _TopIconButton extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final VoidCallback onTap;
-
-  const _TopIconButton({
-    required this.label,
-    required this.icon,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildZoomBtn(double zoom) {
     return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: Colors.white, size: 22),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: const TextStyle(color: Colors.white, fontSize: 11),
-          ),
-        ],
+      onTap: () => _cameraService.setZoom(zoom),
+      child: Container(
+        width: 36, height: 36,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.black.withOpacity(0.5),
+          border: Border.all(color: Colors.white, width: 1.5),
+        ),
+        alignment: Alignment.center,
+        child: Text("${zoom}x", style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
       ),
     );
   }

@@ -3,13 +3,10 @@ import 'package:flutter/services.dart';
 
 import '../models/ai_recommendation.dart';
 
-/// ReCam 原生相机桥接层 —— 以后用来接 Swift 插件。
+/// ReCam 原生相机桥接层 —— 用来连接 Swift 插件。
 ///
-/// 未来 Swift 插件会通过：
-/// - MethodChannel (拍照 / 切镜头 / 比例 / 画质)
-/// - EventChannel (AI 实时推荐 / Histogram 分析)
-///
-/// 现在先让它是一个“安静不报错”的占位实现。
+/// 负责把 Flutter 的指令（拍照、变焦）发给 Swift，
+/// 并把 Swift 的 AI 推荐数据接回来。
 class NativeCameraService {
   static const MethodChannel _channel =
       MethodChannel('recam_native_camera/methods');
@@ -19,21 +16,18 @@ class NativeCameraService {
 
   Stream<AiRecommendation>? _aiStream;
 
-  /// 拍照 —— 以后会真正调用 Swift
-  ///
-  /// 当前阶段：先返回一个空字符串，避免 MissingPluginException 直接把 App 崩掉。
+  /// 拍照
   Future<String> takePhoto() async {
     try {
       final path = await _channel.invokeMethod<String>("takePhoto");
       return path ?? '';
     } catch (e) {
-      // 先不要让整个 App 崩掉，调试阶段打印一下就好
       print('Native takePhoto error: $e');
       return '';
     }
   }
 
-  /// 切换前后镜头（预留）
+  /// 切换前后镜头
   Future<void> switchCamera() async {
     try {
       await _channel.invokeMethod("switchCamera");
@@ -42,7 +36,16 @@ class NativeCameraService {
     }
   }
 
-  /// 更新比例（3:4 / 1:1）（预留）
+  /// [新增] 设置变焦 (0.5 / 1.0 / 2.0)
+  Future<void> setZoom(double zoom) async {
+    try {
+      await _channel.invokeMethod("setZoom", {"zoom": zoom});
+    } catch (e) {
+      print('setZoom error: $e');
+    }
+  }
+
+  /// 更新比例（3:4 / 1:1）
   Future<void> setAspectRatio(String aspect) async {
     try {
       await _channel.invokeMethod("setAspectRatio", {"aspect": aspect});
@@ -51,7 +54,7 @@ class NativeCameraService {
     }
   }
 
-  /// 更新闪光灯（off / auto / on）（预留）
+  /// 更新闪光灯（off / auto / on）
   Future<void> setFlashMode(String mode) async {
     try {
       await _channel.invokeMethod("setFlashMode", {"mode": mode});
@@ -60,7 +63,7 @@ class NativeCameraService {
     }
   }
 
-  /// 更新画质（low / medium / high）（预留）
+  /// 更新画质（low / medium / high）
   Future<void> setQuality(String quality) async {
     try {
       await _channel.invokeMethod("setQuality", {"quality": quality});
@@ -69,7 +72,7 @@ class NativeCameraService {
     }
   }
 
-  /// AI 实时推荐 —— Swift 通过 EventChannel 推数据（预留）
+  /// AI 实时推荐 —— 监听 Swift 发来的数据流
   Stream<AiRecommendation> get aiStream {
     return _aiStream ??=
         _aiChannel.receiveBroadcastStream().map((data) {
