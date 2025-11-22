@@ -14,6 +14,9 @@ dependencies:
   cupertino_icons: ^1.0.8
   camera: ^0.10.5+9
 
+  recam_native_camera:
+    path: recam_native_camera
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
