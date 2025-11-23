@@ -18,13 +18,16 @@ dependencies:
   recam_native_camera:
     path: recam_native_camera
 
-  # --- [v1.3 新增] 本地存储 (记账本) ---
+  # --- 本地存储 (记账本 & 配置) ---
   shared_preferences: ^2.2.2
 
-  # --- [v1.3 新增] 时间格式化 (显示拍照时间) ---
+  # --- 时间格式化 ---
   intl: ^0.19.0
 
-  # --- 备用相机库 (虽然我们用了原生，但为了防报错先留着) ---
+  # --- [v1.4 新增] 权限管理专家 ---
+  permission_handler: ^11.0.1
+
+  # --- 备用相机库 ---
   camera: ^0.10.5
 
 dev_dependencies:
