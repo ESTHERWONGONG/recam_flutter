@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../services/native_camera_service.dart'; 
-import '../../models/ai_recommendation.dart'; // 👈 必须引入这个，才能看懂 AI 数据
+import '../../models/ai_recommendation.dart'; 
+// import '../gallery/gallery_screen.dart'; // 哪怕这个引用报错也没事，因为我们要用字符串跳转
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -19,19 +20,20 @@ class _CameraScreenState extends State<CameraScreen> {
   // AI 数据流
   Stream<AiRecommendation>? _aiStream;
   
-  // 为了保持 Service 实例稳定，我们在 State 里持有一个
+  // 实例化 Service
   final NativeCameraService _cameraService = NativeCameraService();
 
   @override
   void initState() {
     super.initState();
-    // 启动监听
+    // 启动 AI 监听
     _aiStream = _cameraService.aiStream;
   }
 
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
+    // 3:4 取景框高度
     final viewfinderHeight = screenWidth * (4 / 3);
 
     return Scaffold(
@@ -39,8 +41,10 @@ class _CameraScreenState extends State<CameraScreen> {
       body: SafeArea(
         child: Column(
           children: [
+            // 1. 顶部工具栏
             _buildTopBar(),
 
+            // 2. 中间取景区域
             Expanded(
               child: Center(
                 child: SizedBox(
@@ -48,7 +52,7 @@ class _CameraScreenState extends State<CameraScreen> {
                   height: viewfinderHeight,
                   child: Stack(
                     children: [
-                      // 1. 原生相机画面
+                      // A. 原生相机视图 (Swift)
                       const UiKitView(
                         viewType: 'recam_native_camera_view',
                         layoutDirection: TextDirection.ltr,
@@ -56,24 +60,16 @@ class _CameraScreenState extends State<CameraScreen> {
                         creationParamsCodec: StandardMessageCodec(),
                       ),
 
-                      // 2. AI 推荐气泡
+                      // B. AI 推荐气泡
                       Positioned(
                         top: 20,
                         right: 16,
                         child: StreamBuilder<AiRecommendation>(
                           stream: _aiStream,
                           builder: (context, snapshot) {
-                            // 调试用的：看看有没有数据进来
-                            if (snapshot.hasData) {
-                                print("Dart收到AI数据: ${snapshot.data?.message}");
-                            } else if (snapshot.hasError) {
-                                print("Dart收到错误: ${snapshot.error}");
-                            }
-
                             if (!snapshot.hasData) return const SizedBox();
                             
                             final recommendation = snapshot.data!;
-                            // 如果消息为空，就不显示
                             if (recommendation.message.isEmpty) return const SizedBox();
 
                             return Container(
@@ -82,9 +78,6 @@ class _CameraScreenState extends State<CameraScreen> {
                                 color: Colors.black.withOpacity(0.7),
                                 borderRadius: BorderRadius.circular(20),
                                 border: Border.all(color: Colors.yellowAccent.withOpacity(0.8)),
-                                boxShadow: [
-                                  BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 4)
-                                ]
                               ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -102,7 +95,7 @@ class _CameraScreenState extends State<CameraScreen> {
                         ),
                       ),
                       
-                      // 3. 变焦控制 (0.5 / 1 / 2)
+                      // C. 变焦按钮
                       Positioned(
                         bottom: 16,
                         left: 0, right: 0,
@@ -123,6 +116,7 @@ class _CameraScreenState extends State<CameraScreen> {
               ),
             ),
 
+            // 3. 底部操作板
             Container(
               height: 160,
               color: const Color(0xFF111111),
@@ -134,8 +128,7 @@ class _CameraScreenState extends State<CameraScreen> {
     );
   }
 
-  // --- 组件构建 ---
-
+  // --- 顶部栏 ---
   Widget _buildTopBar() {
     return Container(
       height: 50,
@@ -162,15 +155,36 @@ class _CameraScreenState extends State<CameraScreen> {
     );
   }
 
+  // --- 底部拍摄面板 (已修复：增加跳转逻辑) ---
   Widget _buildCapturePanel() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        IconButton(icon: const Icon(Icons.photo_library, color: Colors.white, size: 32), onPressed: () {}),
+        IconButton(
+          icon: const Icon(Icons.photo_library, color: Colors.white, size: 32),
+          onPressed: () {
+             // 暂时留空，或者跳转相册
+          },
+        ),
+        
+        // 📸 快门按钮
         GestureDetector(
-          onTap: () {
-            print("📸 咔嚓");
-            _cameraService.takePhoto(); 
+          onTap: () async {
+            print("📸 UI: 点击快门，请求拍照...");
+            
+            // 1. 核心：await 等待 Swift 存完图并返回路径
+            final path = await _cameraService.takePhoto();
+            
+            print("💙 UI: 收到图片路径: $path");
+
+            // 2. 核心：跳转到 Gallery 预览页
+            if (path.isNotEmpty && mounted) {
+              Navigator.pushNamed(
+                context,
+                '/gallery', // 直接使用字符串，稳！
+                arguments: path,
+              );
+            }
           },
           child: Container(
             width: 72, height: 72,
@@ -181,6 +195,7 @@ class _CameraScreenState extends State<CameraScreen> {
             ),
           ),
         ),
+
         IconButton(
           icon: const Icon(Icons.filter_vintage, color: Colors.yellowAccent, size: 32),
           onPressed: () => setState(() => _isFilterMode = true),
@@ -189,6 +204,7 @@ class _CameraScreenState extends State<CameraScreen> {
     );
   }
 
+  // --- 滤镜面板 ---
   Widget _buildFilterPanel() {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -214,6 +230,7 @@ class _CameraScreenState extends State<CameraScreen> {
     );
   }
 
+  // --- 变焦按钮 ---
   Widget _buildZoomBtn(double zoom) {
     return GestureDetector(
       onTap: () => _cameraService.setZoom(zoom),
