@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../services/native_camera_service.dart'; 
 import '../../models/ai_recommendation.dart'; 
-// import '../gallery/gallery_screen.dart'; // 哪怕这个引用报错也没事，因为我们要用字符串跳转
+import '../../data/photo_storage.dart'; // ✅ [新增] 引入数据存储管家
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -155,33 +155,38 @@ class _CameraScreenState extends State<CameraScreen> {
     );
   }
 
-  // --- 底部拍摄面板 (已修复：增加跳转逻辑) ---
+  // --- 底部拍摄面板 ---
   Widget _buildCapturePanel() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
+        // ✅ [修改] 左侧相册按钮：点击进入“历史列表模式”
         IconButton(
           icon: const Icon(Icons.photo_library, color: Colors.white, size: 32),
           onPressed: () {
-             // 暂时留空，或者跳转相册
+             // 不传 path 参数，GalleryScreen 就会显示网格列表
+             Navigator.pushNamed(context, '/gallery');
           },
         ),
         
         // 📸 快门按钮
         GestureDetector(
           onTap: () async {
-            print("📸 UI: 点击快门，请求拍照...");
+            print("📸 UI: 点击快门...");
             
-            // 1. 核心：await 等待 Swift 存完图并返回路径
+            // 1. 物理拍照
             final path = await _cameraService.takePhoto();
             
-            print("💙 UI: 收到图片路径: $path");
-
-            // 2. 核心：跳转到 Gallery 预览页
             if (path.isNotEmpty && mounted) {
+              print("💙 收到路径: $path");
+
+              // 2. ✅ [新增] 呼叫管家记账 (持久化保存)
+              await PhotoStorage.savePhoto(path);
+
+              // 3. 跳转预览 (带参数=大图预览模式)
               Navigator.pushNamed(
                 context,
-                '/gallery', // 直接使用字符串，稳！
+                '/gallery',
                 arguments: path,
               );
             }

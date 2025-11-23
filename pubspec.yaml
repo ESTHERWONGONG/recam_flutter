@@ -1,6 +1,6 @@
 name: recam_flutter
-description: ReCam demo app
-publish_to: 'none'
+description: ReCam - AI powered analog camera.
+publish_to: 'none' 
 
 version: 1.0.0+1
 
@@ -11,15 +11,26 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # --- UI 图标库 ---
   cupertino_icons: ^1.0.8
-  camera: ^0.10.5+9
 
+  # --- 你的核心 Swift 插件 (本地路径) ---
   recam_native_camera:
     path: recam_native_camera
+
+  # --- [v1.3 新增] 本地存储 (记账本) ---
+  shared_preferences: ^2.2.2
+
+  # --- [v1.3 新增] 时间格式化 (显示拍照时间) ---
+  intl: ^0.19.0
+
+  # --- 备用相机库 (虽然我们用了原生，但为了防报错先留着) ---
+  camera: ^0.10.5
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_lints: ^3.0.0
 
 flutter:
   uses-material-design: true
