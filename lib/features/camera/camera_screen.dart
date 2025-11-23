@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart'; 
 import '../../services/native_camera_service.dart'; 
 import '../../models/ai_recommendation.dart'; 
 import '../../data/photo_storage.dart'; 
@@ -12,19 +13,45 @@ class CameraScreen extends StatefulWidget {
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen> {
+// ✅ [修改 1] 加上 SingleTickerProviderStateMixin (为了动画)
+class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderStateMixin {
   bool _isFilterMode = false;
   String _flashMode = "off";
   Stream<AiRecommendation>? _aiStream;
   final NativeCameraService _cameraService = NativeCameraService();
-
-  // 防止连点快门，增加一个由锁
   bool _isShooting = false;
+
+  // ✅ [修改 2] 定义动画控制器
+  late AnimationController _galleryAnimController;
+  late Animation<double> _galleryScaleAnim;
 
   @override
   void initState() {
     super.initState();
     _aiStream = _cameraService.aiStream;
+
+    // ✅ [修改 3] 初始化动画：0.2秒内完成 缩放效果
+    _galleryAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 150), // 速度快一点，Q弹
+    );
+    
+    // 定义动画曲线：从 1.0 缩小到 0.7，再弹回 1.0
+    _galleryScaleAnim = Tween<double>(begin: 1.0, end: 0.7).animate(
+      CurvedAnimation(parent: _galleryAnimController, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _galleryAnimController.dispose(); // 记得销毁
+    super.dispose();
+  }
+
+  // ✅ [修改 4] 执行动画的函数
+  Future<void> _runGalleryAnimation() async {
+    await _galleryAnimController.forward(); // 缩小
+    await _galleryAnimController.reverse(); // 弹回
   }
 
   @override
@@ -52,7 +79,6 @@ class _CameraScreenState extends State<CameraScreen> {
                         creationParamsCodec: StandardMessageCodec(),
                       ),
                       _buildAiBubble(),
-                      // 变焦按钮
                       Positioned(
                         bottom: 16,
                         left: 0, right: 0,
@@ -82,8 +108,6 @@ class _CameraScreenState extends State<CameraScreen> {
       ),
     );
   }
-
-  // --- 组件拆分 ---
 
   Widget _buildAiBubble() {
     return Positioned(
@@ -150,19 +174,23 @@ class _CameraScreenState extends State<CameraScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        IconButton(
-          icon: const Icon(Icons.photo_library, color: Colors.white, size: 32),
-          onPressed: () => Navigator.pushNamed(context, '/gallery'),
+        // ✅ [修改 5] 给相册按钮加动画包裹
+        ScaleTransition(
+          scale: _galleryScaleAnim,
+          child: IconButton(
+            icon: const Icon(Icons.photo_library, color: Colors.white, size: 32),
+            onPressed: () => Navigator.pushNamed(context, '/gallery'),
+          ),
         ),
         
-        // 📸 快门按钮 (核心逻辑修改)
+        // 📸 快门按钮
         GestureDetector(
-          onTap: _handleShutterPress, // 抽离出逻辑函数
+          onTap: _handleShutterPress,
           child: Container(
             width: 72, height: 72,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: _isShooting ? Colors.grey : const Color(0xFFCE2029), // 拍摄中变灰
+              color: _isShooting ? Colors.grey : const Color(0xFFCE2029),
               border: Border.all(color: Colors.white, width: 4),
             ),
             child: _isShooting 
@@ -179,59 +207,48 @@ class _CameraScreenState extends State<CameraScreen> {
     );
   }
 
-  // ✅ 新的拍照流程逻辑 (V1.3.1)
+  // ✅ [修改 6] 只有动画，没有 SnackBar 提示了
   Future<void> _handleShutterPress() async {
-    if (_isShooting) return; // 防止连点
+    if (_isShooting) return;
     setState(() => _isShooting = true);
 
     try {
       print("📸 1. 开始拍照...");
-      // 1. 拍照存临时文件
       final path = await _cameraService.takePhoto();
 
       if (path.isEmpty) {
-        // 边界情况 1: 拍照都没成功（可能是磁盘满了连临时文件都写不进去）
-        _showErrorDialog("存储空间已满", "无法写入临时文件，请清理手机空间。");
+        _showErrorDialog("存储空间已满", "无法写入临时文件。");
         return;
       }
 
-      print("📸 2. 存入系统相册...");
-      // 2. 自动保存到系统相册
-      final isSavedToSystem = await _cameraService.saveToGallery(path);
+      // 读取配置
+      final prefs = await SharedPreferences.getInstance();
+      final bool autoSave = prefs.getBool('auto_save_to_gallery') ?? true;
 
-      if (!isSavedToSystem) {
-        // 边界情况 2: 系统相册保存失败 (可能是权限 或 磁盘满)
-        // 注意：Swift 那边如果没权限或存失败会返回 false
-        _showErrorDialog("保存失败", "无法保存到相册。\n请检查：\n1. 手机存储空间是否已满\n2. 设置中是否允许 ReCam 访问相册");
-      } else {
-        // 3. 只有系统保存成功了，才记录到 App 相册 (保持一致性)
-        await PhotoStorage.savePhoto(path);
-        
-        // 4. 给个轻提示，不打断用户连拍
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('✅ 已保存'), 
-              duration: Duration(milliseconds: 800),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
+      // 逻辑：
+      // 1. 如果开了开关 -> 尝试存系统相册
+      if (autoSave) {
+        await _cameraService.saveToGallery(path);
+        // 即使系统相册存失败了，也不弹窗打断用户，反正 App 内还有备份
       }
 
+      // 2. App 内必须记账 (这是你的要求：不管怎样都要存后台)
+      await PhotoStorage.savePhoto(path);
+      
+      // 3. 触发左下角动画 (反馈：已搞定)
+      _runGalleryAnimation();
+
     } catch (e) {
-      _showErrorDialog("未知错误", "拍摄过程中发生错误: $e");
+      _showErrorDialog("未知错误", "Error: $e");
     } finally {
       if (mounted) setState(() => _isShooting = false);
     }
   }
 
-  // ⚠️ 强弹窗：存储空间不足或权限问题
   void _showErrorDialog(String title, String content) {
     showDialog(
       context: context,
-      barrierDismissible: false, // 用户必须点确认
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: Text(title, style: const TextStyle(color: Colors.red)),
         content: Text(content),
