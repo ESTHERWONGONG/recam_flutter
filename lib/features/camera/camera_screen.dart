@@ -18,11 +18,14 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
   String _flashMode = "off";
   Stream<AiRecommendation>? _aiStream;
   final NativeCameraService _cameraService = NativeCameraService();
+  
+  // 防止连点快门
   bool _isShooting = false;
-
-  // ✅ [修改] 默认改为 "4:3" (符合行业惯例)
+  
+  // 当前比例: "4:3" 或 "1:1"
   String _currentRatio = "4:3"; 
 
+  // 动画控制器 (左下角相册图标跳动)
   late AnimationController _galleryAnimController;
   late Animation<double> _galleryScaleAnim;
 
@@ -30,6 +33,8 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
   void initState() {
     super.initState();
     _aiStream = _cameraService.aiStream;
+    
+    // 初始化动画
     _galleryAnimController = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 150),
     );
@@ -44,6 +49,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
     super.dispose();
   }
 
+  // 执行相册图标动画
   Future<void> _runGalleryAnimation() async {
     await _galleryAnimController.forward();
     await _galleryAnimController.reverse();
@@ -52,9 +58,10 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
-    // 📷 这里计算依然是用 4/3 (也就是 Height = Width * 1.33)，保持竖屏长方形
+    // 基础取景框高度固定为 4:3
     final viewfinderHeight = screenWidth * (4 / 3);
     
+    // 计算遮罩高度 (如果是 1:1，上下各遮一部分)
     final double maskHeight = _currentRatio == "1:1" 
         ? (viewfinderHeight - screenWidth) / 2 
         : 0.0;
@@ -64,19 +71,24 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
       body: SafeArea(
         child: Column(
           children: [
+            // 1. 顶部工具栏
             _buildTopBar(),
-            // 取景框部分 (保持不变)
+
+            // 2. 中间取景框 (高度固定)
             SizedBox(
               width: screenWidth,
               height: viewfinderHeight,
               child: Stack(
                 children: [
+                  // A. 原生相机画面 (底层)
                   const UiKitView(
                     viewType: 'recam_native_camera_view',
                     layoutDirection: TextDirection.ltr,
                     creationParams: {},
                     creationParamsCodec: StandardMessageCodec(),
                   ),
+                  
+                  // B. 遮罩层 (黑色幕布)
                   Column(
                     children: [
                       AnimatedContainer(
@@ -85,7 +97,7 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
                         width: double.infinity,
                         color: Colors.black,
                       ),
-                      const Spacer(),
+                      const Spacer(), // 中间镂空
                       AnimatedContainer(
                         duration: const Duration(milliseconds: 300),
                         height: maskHeight,
@@ -94,12 +106,16 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
                       ),
                     ],
                   ),
+
+                  // C. AI 气泡 (随遮罩移动)
                   AnimatedPositioned(
                     duration: const Duration(milliseconds: 300),
                     top: 20 + maskHeight,
                     right: 16,
                     child: _buildAiBubbleContent(),
                   ),
+                  
+                  // D. 变焦按钮 (随遮罩移动)
                   AnimatedPositioned(
                     duration: const Duration(milliseconds: 300),
                     bottom: 16 + maskHeight,
@@ -118,6 +134,8 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
                 ],
               ),
             ),
+
+            // 3. 底部操作区 (撑满剩余空间)
             Expanded(
               child: Container(
                 color: const Color(0xFF111111),
@@ -126,6 +144,142 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // --- 组件封装 ---
+
+  Widget _buildTopBar() {
+    return Container(
+      height: 50,
+      color: Colors.black,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          // ✅ [核心修复] 设置按钮：点击跳转 /settings
+          IconButton(
+            icon: const Icon(Icons.settings, color: Colors.white), 
+            onPressed: () {
+              Navigator.pushNamed(context, '/settings');
+            }
+          ),
+          
+          IconButton(
+            icon: Icon(_flashMode == 'on' ? Icons.flash_on : Icons.flash_off, color: Colors.white),
+            onPressed: () {
+              final newMode = _flashMode == 'off' ? 'auto' : (_flashMode == 'auto' ? 'on' : 'off');
+              setState(() => _flashMode = newMode);
+              _cameraService.setFlashMode(newMode);
+            },
+          ),
+          
+          // 比例切换按钮
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _currentRatio = (_currentRatio == "4:3") ? "1:1" : "4:3";
+              });
+            }, 
+            child: Text(_currentRatio, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
+          ),
+          
+          IconButton(
+            icon: const Icon(Icons.flip_camera_ios, color: Colors.white), 
+            onPressed: () => _cameraService.switchCamera()
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCapturePanel() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        // 左下角相册入口 (带动画)
+        ScaleTransition(
+          scale: _galleryScaleAnim,
+          child: IconButton(
+            icon: const Icon(Icons.photo_library, color: Colors.white, size: 32),
+            onPressed: () => Navigator.pushNamed(context, '/gallery'),
+          ),
+        ),
+        
+        // 快门按钮
+        GestureDetector(
+          onTap: _handleShutterPress,
+          child: Container(
+            width: 72, height: 72,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _isShooting ? Colors.grey : const Color(0xFFCE2029),
+              border: Border.all(color: Colors.white, width: 4),
+            ),
+            child: _isShooting 
+                ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                : null,
+          ),
+        ),
+
+        // 滤镜入口
+        IconButton(
+          icon: const Icon(Icons.filter_vintage, color: Colors.yellowAccent, size: 32),
+          onPressed: () => setState(() => _isFilterMode = true),
+        ),
+      ],
+    );
+  }
+
+  // 📸 核心拍照逻辑 (包含自动保存检查)
+  Future<void> _handleShutterPress() async {
+    if (_isShooting) return;
+    setState(() => _isShooting = true);
+
+    try {
+      print("📸 1. 开始拍照 (比例: $_currentRatio)...");
+      final path = await _cameraService.takePhoto(_currentRatio);
+
+      if (path.isEmpty) {
+        _showErrorDialog("存储空间已满", "无法写入临时文件。");
+        return;
+      }
+
+      // 2. 读取设置：是否自动保存？
+      final prefs = await SharedPreferences.getInstance();
+      final bool autoSave = prefs.getBool('auto_save_to_gallery') ?? true;
+
+      if (autoSave) {
+        // 尝试保存到系统相册 (失败不打断，静默处理或打Log)
+        await _cameraService.saveToGallery(path);
+      }
+
+      // 3. 必须保存到 App 相册 (记账)
+      await PhotoStorage.savePhoto(path);
+      
+      // 4. 播放动画反馈
+      _runGalleryAnimation();
+
+    } catch (e) {
+      _showErrorDialog("未知错误", "Error: $e");
+    } finally {
+      if (mounted) setState(() => _isShooting = false);
+    }
+  }
+
+  void _showErrorDialog(String title, String content) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text(title, style: const TextStyle(color: Colors.red)),
+        content: Text(content),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("知道了"),
+          ),
+        ],
       ),
     );
   }
@@ -158,120 +312,6 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
           ),
         );
       },
-    );
-  }
-
-  Widget _buildTopBar() {
-    return Container(
-      height: 50,
-      color: Colors.black,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          IconButton(icon: const Icon(Icons.settings, color: Colors.white), onPressed: () {}),
-          IconButton(
-            icon: Icon(_flashMode == 'on' ? Icons.flash_on : Icons.flash_off, color: Colors.white),
-            onPressed: () {
-              final newMode = _flashMode == 'off' ? 'auto' : (_flashMode == 'auto' ? 'on' : 'off');
-              setState(() => _flashMode = newMode);
-              _cameraService.setFlashMode(newMode);
-            },
-          ),
-          // ✅ [修改] 按钮逻辑：4:3 <-> 1:1
-          TextButton(
-            onPressed: () {
-              setState(() {
-                _currentRatio = (_currentRatio == "4:3") ? "1:1" : "4:3";
-              });
-            }, 
-            child: Text(_currentRatio, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
-          ),
-          IconButton(
-            icon: const Icon(Icons.flip_camera_ios, color: Colors.white), 
-            onPressed: () => _cameraService.switchCamera()
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCapturePanel() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: [
-        ScaleTransition(
-          scale: _galleryScaleAnim,
-          child: IconButton(
-            icon: const Icon(Icons.photo_library, color: Colors.white, size: 32),
-            onPressed: () => Navigator.pushNamed(context, '/gallery'),
-          ),
-        ),
-        GestureDetector(
-          onTap: _handleShutterPress,
-          child: Container(
-            width: 72, height: 72,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _isShooting ? Colors.grey : const Color(0xFFCE2029),
-              border: Border.all(color: Colors.white, width: 4),
-            ),
-            child: _isShooting 
-                ? const Center(child: CircularProgressIndicator(color: Colors.white))
-                : null,
-          ),
-        ),
-        IconButton(
-          icon: const Icon(Icons.filter_vintage, color: Colors.yellowAccent, size: 32),
-          onPressed: () => setState(() => _isFilterMode = true),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _handleShutterPress() async {
-    if (_isShooting) return;
-    setState(() => _isShooting = true);
-
-    try {
-      print("📸 1. 开始拍照 (比例: $_currentRatio)...");
-      final path = await _cameraService.takePhoto(_currentRatio);
-
-      if (path.isEmpty) {
-        _showErrorDialog("存储空间已满", "无法写入临时文件。");
-        return;
-      }
-
-      final prefs = await SharedPreferences.getInstance();
-      final bool autoSave = prefs.getBool('auto_save_to_gallery') ?? true;
-
-      if (autoSave) {
-        await _cameraService.saveToGallery(path);
-      }
-
-      await PhotoStorage.savePhoto(path);
-      _runGalleryAnimation();
-
-    } catch (e) {
-      _showErrorDialog("未知错误", "Error: $e");
-    } finally {
-      if (mounted) setState(() => _isShooting = false);
-    }
-  }
-
-  void _showErrorDialog(String title, String content) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: Text(title, style: const TextStyle(color: Colors.red)),
-        content: Text(content),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("知道了"),
-          ),
-        ],
-      ),
     );
   }
 

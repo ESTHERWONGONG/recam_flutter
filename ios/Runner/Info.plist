@@ -46,19 +46,23 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 
-    <!-- 📷 相机权限 -->
+    <!-- ✅ [新增] 跳转白名单 (iOS 9+) -->
+    <!-- 如果不加这个，canLaunchUrl 会一直返回 false -->
+    <key>LSApplicationQueriesSchemes</key>
+    <array>
+        <string>xhsdiscover</string>  <!-- 小红书 -->
+        <string>instagram</string>    <!-- IG -->
+        <string>weixin</string>       <!-- 微信 -->
+        <string>mailto</string>       <!-- 邮箱 -->
+    </array>
+
+    <!-- 📷 权限配置 -->
 	<key>NSCameraUsageDescription</key>
 	<string>ReCam 需要使用相机进行拍摄和实时预览。</string>
-    
-    <!-- 🎤 麦克风权限 -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>ReCam 需要麦克风用于录制视频音频。</string>
-
-    <!-- 🖼️ 相册读取权限 (新增) -->
     <key>NSPhotoLibraryUsageDescription</key>
     <string>ReCam 需要访问相册以保存您的胶片成片。</string>
-
-    <!-- 💾 相册写入权限 (新增) -->
     <key>NSPhotoLibraryAddUsageDescription</key>
     <string>ReCam 需要写入权限以保存您的胶片成片。</string>
 </dict>
