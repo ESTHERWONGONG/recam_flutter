@@ -1,12 +1,11 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart'; // 用于格式化时间
+import 'package:intl/intl.dart'; 
 import '../../services/native_camera_service.dart';
-import '../../data/photo_storage.dart'; // 引入数据层
+import '../../data/photo_storage.dart'; 
 
 class GalleryScreen extends StatefulWidget {
   static const route = '/gallery';
-
   const GalleryScreen({super.key});
 
   @override
@@ -14,22 +13,17 @@ class GalleryScreen extends StatefulWidget {
 }
 
 class _GalleryScreenState extends State<GalleryScreen> {
-  // 当前显示的模式：null=列表模式，String=大图预览模式
-  String? _viewingPath;
-  // 数据列表
+  int? _currentIndex; // 模式：null=网格, int=当前大图索引
   List<ReCamPhoto> _photos = [];
   bool _isLoading = true;
+  PageController? _pageController;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // 1. 获取路由参数 (如果是刚拍完照进来的，会有路径)
-    final args = ModalRoute.of(context)?.settings.arguments;
-    if (args is String) {
-      _viewingPath = args;
+    if (_isLoading) {
+        _loadPhotos();
     }
-    // 2. 加载历史数据
-    _loadPhotos();
   }
 
   Future<void> _loadPhotos() async {
@@ -38,99 +32,136 @@ class _GalleryScreenState extends State<GalleryScreen> {
       setState(() {
         _photos = list;
         _isLoading = false;
+        
+        // 检查是否是刚拍照跳转过来的
+        final args = ModalRoute.of(context)?.settings.arguments;
+        if (args is String && _photos.isNotEmpty) {
+           final index = _photos.indexWhere((p) => p.path == args);
+           if (index != -1) _enterPreviewMode(index);
+           else _enterPreviewMode(0);
+        }
       });
     }
+  }
+  
+  void _enterPreviewMode(int index) {
+    setState(() {
+      _currentIndex = index;
+      _pageController = PageController(initialPage: index);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    // 根据是否有 _viewingPath 决定显示什么
-    final bool isPreviewMode = _viewingPath != null;
+    final bool isPreviewMode = _currentIndex != null;
 
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
-        title: Text(isPreviewMode ? '预览' : 'Gallery (${_photos.length})', 
-          style: const TextStyle(color: Colors.white)),
+        // 预览模式显示标题，网格模式标题可以简单点
+        title: Text(isPreviewMode ? '预览' : 'Gallery', 
+          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
         iconTheme: const IconThemeData(color: Colors.white),
+        centerTitle: true, 
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back_ios_new, size: 20), // 更现代的返回箭头
           onPressed: () {
             if (isPreviewMode) {
-              // 如果是大图模式，点返回先回到列表 (如果是直接从相机跳过来的，逻辑要微调，这里简单处理直接pop)
-              // 为了体验更好：如果刚拍完，点返回应该是回到相机
-              // 如果是从列表点进大图，点返回回到列表
-              // 这里统一：Navigator.pop
-              Navigator.pop(context);
+              setState(() {
+                _currentIndex = null;
+                _pageController?.dispose();
+                _pageController = null;
+              });
             } else {
               Navigator.pop(context);
             }
           },
         ),
         actions: [
-          // 只有在大图模式下，才显示“保存系统相册”按钮
-          if (isPreviewMode)
+          if (isPreviewMode && _photos.isNotEmpty)
             IconButton(
-              icon: const Icon(Icons.download_rounded, color: Colors.yellowAccent, size: 28),
-              onPressed: () => _saveToSystemAlbum(context, _viewingPath!),
+              icon: const Icon(Icons.download_rounded, color: Colors.yellowAccent, size: 26),
+              onPressed: () => _saveToSystemAlbum(context, _photos[_currentIndex!].path),
             )
         ],
       ),
-      // 核心：双模式切换
+      // 移除 SafeArea 的 bottom，让图片能沉浸到底部
       body: isPreviewMode 
-          ? _buildPreviewView(_viewingPath!) 
+          ? _buildPageView() 
           : _buildGridView(),
     );
   }
 
-  // --- 模式 A: 大图预览 ---
-  Widget _buildPreviewView(String path) {
-    return Center(
-      child: Image.file(File(path), fit: BoxFit.contain),
+  // --- 大图浏览模式 ---
+  Widget _buildPageView() {
+    if (_photos.isEmpty) return const SizedBox();
+    
+    return PageView.builder(
+      controller: _pageController,
+      itemCount: _photos.length,
+      onPageChanged: (index) => setState(() => _currentIndex = index),
+      itemBuilder: (context, index) {
+        final photo = _photos[index];
+        return Center(
+          child: InteractiveViewer(
+            child: Image.file(File(photo.path), fit: BoxFit.contain),
+          ),
+        );
+      },
     );
   }
 
-  // --- 模式 B: 网格列表 ---
+  // --- ✅ [核心修改] 网格模式 ---
   Widget _buildGridView() {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_photos.isEmpty) {
-      return const Center(child: Text("还没有照片，快去拍一张吧！", style: TextStyle(color: Colors.grey)));
-    }
+    if (_isLoading) return const Center(child: CircularProgressIndicator(color: Colors.yellowAccent));
+    if (_photos.isEmpty) return const Center(child: Text("还没有照片", style: TextStyle(color: Colors.grey)));
 
     return GridView.builder(
-      padding: const EdgeInsets.all(2),
+      // ✅ [修改] 边距极小，往上顶
+      padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 0), 
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3, // 一行 3 个
-        crossAxisSpacing: 2,
-        mainAxisSpacing: 2,
-        childAspectRatio: 3 / 4, // 照片比例
+        crossAxisCount: 3, // 保持3列
+        crossAxisSpacing: 1.5, // 间距调小
+        mainAxisSpacing: 1.5,
+        // ✅ [修改] 宽高比：0.66 (大约 2:3)
+        // 数值越小，格子越高。之前是 0.75(3:4)，现在 0.66 会显得更修长
+        childAspectRatio: 0.66, 
       ),
       itemCount: _photos.length,
       itemBuilder: (context, index) {
         final photo = _photos[index];
         return GestureDetector(
-          onTap: () {
-            // 点击缩略图 -> 变大图
-            setState(() {
-              _viewingPath = photo.path;
-            });
-          },
+          onTap: () => _enterPreviewMode(index),
           child: Stack(
             fit: StackFit.expand,
             children: [
-              Image.file(
-                File(photo.path),
-                fit: BoxFit.cover,
+              // 图片铺满，裁剪多余部分
+              Image.file(File(photo.path), fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(color: Colors.grey[900], child: const Icon(Icons.broken_image, color: Colors.grey));
+                },
               ),
-              // 显示时间
+              // 渐变遮罩 (为了让时间文字看清)
+              Positioned(
+                bottom: 0, left: 0, right: 0,
+                child: Container(
+                  height: 30,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.bottomCenter,
+                      end: Alignment.topCenter,
+                      colors: [Colors.black.withOpacity(0.6), Colors.transparent],
+                    ),
+                  ),
+                ),
+              ),
+              // 时间戳
               Positioned(
                 bottom: 4, right: 4,
                 child: Text(
-                  DateFormat('HH:mm').format(photo.createdAt),
-                  style: const TextStyle(color: Colors.white, fontSize: 10, shadows: [Shadow(blurRadius: 2, color: Colors.black)]),
+                  DateFormat('MM-dd HH:mm').format(photo.createdAt), // 显示日期+时间
+                  style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w500),
                 ),
               )
             ],
@@ -140,15 +171,17 @@ class _GalleryScreenState extends State<GalleryScreen> {
     );
   }
 
-  // 保存到系统相册
   Future<void> _saveToSystemAlbum(BuildContext context, String path) async {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('正在保存...'), duration: Duration(milliseconds: 500)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('正在保存...'), duration: Duration(milliseconds: 500))
+    );
     final success = await NativeCameraService().saveToGallery(path);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(success ? '✅ 已保存到系统相册！' : '❌ 保存失败'),
+          content: Text(success ? '✅ 已保存到系统相册' : '❌ 保存失败，请检查权限'), 
           backgroundColor: success ? Colors.green : Colors.red,
+          duration: const Duration(seconds: 1),
         )
       );
     }

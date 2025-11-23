@@ -13,7 +13,6 @@ class CameraScreen extends StatefulWidget {
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
-// ✅ [修改 1] 加上 SingleTickerProviderStateMixin (为了动画)
 class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderStateMixin {
   bool _isFilterMode = false;
   String _flashMode = "off";
@@ -21,7 +20,9 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
   final NativeCameraService _cameraService = NativeCameraService();
   bool _isShooting = false;
 
-  // ✅ [修改 2] 定义动画控制器
+  // ✅ [修改] 默认改为 "4:3" (符合行业惯例)
+  String _currentRatio = "4:3"; 
+
   late AnimationController _galleryAnimController;
   late Animation<double> _galleryScaleAnim;
 
@@ -29,14 +30,9 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
   void initState() {
     super.initState();
     _aiStream = _cameraService.aiStream;
-
-    // ✅ [修改 3] 初始化动画：0.2秒内完成 缩放效果
     _galleryAnimController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 150), // 速度快一点，Q弹
+      vsync: this, duration: const Duration(milliseconds: 150),
     );
-    
-    // 定义动画曲线：从 1.0 缩小到 0.7，再弹回 1.0
     _galleryScaleAnim = Tween<double>(begin: 1.0, end: 0.7).animate(
       CurvedAnimation(parent: _galleryAnimController, curve: Curves.easeInOut),
     );
@@ -44,20 +40,24 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
 
   @override
   void dispose() {
-    _galleryAnimController.dispose(); // 记得销毁
+    _galleryAnimController.dispose();
     super.dispose();
   }
 
-  // ✅ [修改 4] 执行动画的函数
   Future<void> _runGalleryAnimation() async {
-    await _galleryAnimController.forward(); // 缩小
-    await _galleryAnimController.reverse(); // 弹回
+    await _galleryAnimController.forward();
+    await _galleryAnimController.reverse();
   }
 
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
+    // 📷 这里计算依然是用 4/3 (也就是 Height = Width * 1.33)，保持竖屏长方形
     final viewfinderHeight = screenWidth * (4 / 3);
+    
+    final double maskHeight = _currentRatio == "1:1" 
+        ? (viewfinderHeight - screenWidth) / 2 
+        : 0.0;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -65,43 +65,64 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
         child: Column(
           children: [
             _buildTopBar(),
-            Expanded(
-              child: Center(
-                child: SizedBox(
-                  width: screenWidth,
-                  height: viewfinderHeight,
-                  child: Stack(
+            // 取景框部分 (保持不变)
+            SizedBox(
+              width: screenWidth,
+              height: viewfinderHeight,
+              child: Stack(
+                children: [
+                  const UiKitView(
+                    viewType: 'recam_native_camera_view',
+                    layoutDirection: TextDirection.ltr,
+                    creationParams: {},
+                    creationParamsCodec: StandardMessageCodec(),
+                  ),
+                  Column(
                     children: [
-                      const UiKitView(
-                        viewType: 'recam_native_camera_view',
-                        layoutDirection: TextDirection.ltr,
-                        creationParams: {},
-                        creationParamsCodec: StandardMessageCodec(),
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        height: maskHeight,
+                        width: double.infinity,
+                        color: Colors.black,
                       ),
-                      _buildAiBubble(),
-                      Positioned(
-                        bottom: 16,
-                        left: 0, right: 0,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            _buildZoomBtn(0.5),
-                            const SizedBox(width: 24),
-                            _buildZoomBtn(1.0),
-                            const SizedBox(width: 24),
-                            _buildZoomBtn(2.0),
-                          ],
-                        ),
+                      const Spacer(),
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        height: maskHeight,
+                        width: double.infinity,
+                        color: Colors.black,
                       ),
                     ],
                   ),
-                ),
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 300),
+                    top: 20 + maskHeight,
+                    right: 16,
+                    child: _buildAiBubbleContent(),
+                  ),
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 300),
+                    bottom: 16 + maskHeight,
+                    left: 0, right: 0,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _buildZoomBtn(0.5),
+                        const SizedBox(width: 24),
+                        _buildZoomBtn(1.0),
+                        const SizedBox(width: 24),
+                        _buildZoomBtn(2.0),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
-            Container(
-              height: 160,
-              color: const Color(0xFF111111),
-              child: _isFilterMode ? _buildFilterPanel() : _buildCapturePanel(),
+            Expanded(
+              child: Container(
+                color: const Color(0xFF111111),
+                child: _isFilterMode ? _buildFilterPanel() : _buildCapturePanel(),
+              ),
             ),
           ],
         ),
@@ -109,38 +130,34 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
     );
   }
 
-  Widget _buildAiBubble() {
-    return Positioned(
-      top: 20,
-      right: 16,
-      child: StreamBuilder<AiRecommendation>(
-        stream: _aiStream,
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) return const SizedBox();
-          final recommendation = snapshot.data!;
-          if (recommendation.message.isEmpty) return const SizedBox();
+  Widget _buildAiBubbleContent() {
+    return StreamBuilder<AiRecommendation>(
+      stream: _aiStream,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const SizedBox();
+        final recommendation = snapshot.data!;
+        if (recommendation.message.isEmpty) return const SizedBox();
 
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.7),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.yellowAccent.withOpacity(0.8)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.auto_awesome, color: Colors.yellowAccent, size: 16),
-                const SizedBox(width: 6),
-                Text(
-                  recommendation.message, 
-                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.7),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.yellowAccent.withOpacity(0.8)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.auto_awesome, color: Colors.yellowAccent, size: 16),
+              const SizedBox(width: 6),
+              Text(
+                recommendation.message, 
+                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -160,7 +177,15 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
               _cameraService.setFlashMode(newMode);
             },
           ),
-          const Text("3:4", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          // ✅ [修改] 按钮逻辑：4:3 <-> 1:1
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _currentRatio = (_currentRatio == "4:3") ? "1:1" : "4:3";
+              });
+            }, 
+            child: Text(_currentRatio, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
+          ),
           IconButton(
             icon: const Icon(Icons.flip_camera_ios, color: Colors.white), 
             onPressed: () => _cameraService.switchCamera()
@@ -174,7 +199,6 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        // ✅ [修改 5] 给相册按钮加动画包裹
         ScaleTransition(
           scale: _galleryScaleAnim,
           child: IconButton(
@@ -182,8 +206,6 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
             onPressed: () => Navigator.pushNamed(context, '/gallery'),
           ),
         ),
-        
-        // 📸 快门按钮
         GestureDetector(
           onTap: _handleShutterPress,
           child: Container(
@@ -198,7 +220,6 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
                 : null,
           ),
         ),
-
         IconButton(
           icon: const Icon(Icons.filter_vintage, color: Colors.yellowAccent, size: 32),
           onPressed: () => setState(() => _isFilterMode = true),
@@ -207,35 +228,27 @@ class _CameraScreenState extends State<CameraScreen> with SingleTickerProviderSt
     );
   }
 
-  // ✅ [修改 6] 只有动画，没有 SnackBar 提示了
   Future<void> _handleShutterPress() async {
     if (_isShooting) return;
     setState(() => _isShooting = true);
 
     try {
-      print("📸 1. 开始拍照...");
-      final path = await _cameraService.takePhoto();
+      print("📸 1. 开始拍照 (比例: $_currentRatio)...");
+      final path = await _cameraService.takePhoto(_currentRatio);
 
       if (path.isEmpty) {
         _showErrorDialog("存储空间已满", "无法写入临时文件。");
         return;
       }
 
-      // 读取配置
       final prefs = await SharedPreferences.getInstance();
       final bool autoSave = prefs.getBool('auto_save_to_gallery') ?? true;
 
-      // 逻辑：
-      // 1. 如果开了开关 -> 尝试存系统相册
       if (autoSave) {
         await _cameraService.saveToGallery(path);
-        // 即使系统相册存失败了，也不弹窗打断用户，反正 App 内还有备份
       }
 
-      // 2. App 内必须记账 (这是你的要求：不管怎样都要存后台)
       await PhotoStorage.savePhoto(path);
-      
-      // 3. 触发左下角动画 (反馈：已搞定)
       _runGalleryAnimation();
 
     } catch (e) {

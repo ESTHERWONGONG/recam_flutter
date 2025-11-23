@@ -12,13 +12,16 @@ class PermissionScreen extends StatefulWidget {
 }
 
 class _PermissionScreenState extends State<PermissionScreen> {
-  // 权限状态 (❌ = false, ✅ = true)
+  // 权限状态
   bool _cameraGranted = false;
   bool _micGranted = false;
   bool _photoGranted = false;
   
-  // 偏好设置 (默认开启自动保存)
+  // 设置状态
   bool _autoSaveEnabled = true;
+
+  // ✅ [新增] 防抖锁：是否正在请求中？
+  bool _isRequesting = false;
 
   @override
   void initState() {
@@ -26,7 +29,7 @@ class _PermissionScreenState extends State<PermissionScreen> {
     _checkInitialStatus();
   }
 
-  // 1. 刚进来时，检查一下当前状态
+  // 1. 检查状态 (只看不请求)
   Future<void> _checkInitialStatus() async {
     final camera = await Permission.camera.status;
     final mic = await Permission.microphone.status;
@@ -37,52 +40,62 @@ class _PermissionScreenState extends State<PermissionScreen> {
       setState(() {
         _cameraGranted = camera.isGranted;
         _micGranted = mic.isGranted;
-        // iOS 14+ 可能是 limited (部分访问)，也算通过
         _photoGranted = photos.isGranted || photos.isLimited || photosAdd.isGranted || photosAdd.isLimited;
       });
     }
   }
 
-  // 2. 点击按钮：请求所有必要权限
+  // 2. ✅ [修改] 请求权限 (加锁防抖)
   Future<void> _requestAllPermissions() async {
-    // 这是一个数组，iOS 会依次弹窗
-    Map<Permission, PermissionStatus> statuses = await [
-      Permission.camera,
-      Permission.microphone,
-      Permission.photos,
-    ].request();
+    // 如果正在请求中，直接无视点击，防止报错
+    if (_isRequesting) return;
 
-    if (mounted) {
-      setState(() {
-        _cameraGranted = statuses[Permission.camera]!.isGranted;
-        _micGranted = statuses[Permission.microphone]!.isGranted;
-        
-        final p = statuses[Permission.photos]!;
-        _photoGranted = p.isGranted || p.isLimited;
-      });
+    setState(() => _isRequesting = true); // 🔒 上锁
+
+    try {
+      print("🔘 UI: 开始请求权限...");
+      
+      // 这是一个耗时操作，iOS 会一个个弹窗，用户需要时间点击
+      Map<Permission, PermissionStatus> statuses = await [
+        Permission.camera,
+        Permission.microphone,
+        Permission.photos,
+      ].request();
+
+      print("✅ UI: 请求完成");
+
+      if (mounted) {
+        setState(() {
+          _cameraGranted = statuses[Permission.camera]!.isGranted;
+          _micGranted = statuses[Permission.microphone]!.isGranted;
+          
+          final p = statuses[Permission.photos]!;
+          _photoGranted = p.isGranted || p.isLimited;
+        });
+      }
+    } catch (e) {
+      print("❌ 权限请求异常: $e");
+    } finally {
+      // 无论成功失败，最后都要解锁
+      if (mounted) {
+        setState(() => _isRequesting = false); // 🔓 解锁
+      }
     }
   }
 
-  // 3. 进入 App (存配置 + 跳转)
+  // 3. 进入 App
   Future<void> _enterApp() async {
     final prefs = await SharedPreferences.getInstance();
-    
-    // A. 记录“用户已完成引导”，下次不显示这页了
     await prefs.setBool('has_completed_onboarding', true);
-    
-    // B. 记录“自动保存”的开关状态 (供相机页读取)
     await prefs.setBool('auto_save_to_gallery', _autoSaveEnabled);
 
-    // C. 跳转相机
     if (mounted) {
-      // pushReplacementNamed 意味着“关门”，用户按返回键回不到这里
       Navigator.pushReplacementNamed(context, CameraScreen.route);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // 只有 3 个硬性指标都满足，才能进门
     final bool canEnter = _cameraGranted && _micGranted && _photoGranted;
 
     return Scaffold(
@@ -100,32 +113,33 @@ class _PermissionScreenState extends State<PermissionScreen> {
               
               const SizedBox(height: 40),
               
-              // --- 必选项 (上部) ---
-              const Text("必要权限 (必须开启)", style: TextStyle(color: Colors.yellowAccent, fontSize: 14, fontWeight: FontWeight.bold)),
+              // --- 必要权限 ---
+              const Text("必要权限", style: TextStyle(color: Colors.yellowAccent, fontSize: 14, fontWeight: FontWeight.bold)),
               const SizedBox(height: 20),
               _buildPermissionItem("相机访问", Icons.camera_alt, _cameraGranted),
               _buildPermissionItem("麦克风权限", Icons.mic, _micGranted),
               _buildPermissionItem("相册读写", Icons.photo_library, _photoGranted),
 
-              // 如果还没全绿，显示这个授权按钮
+              // --- 授权按钮 (未授权时显示) ---
               if (!canEnter)
                 Padding(
                   padding: const EdgeInsets.only(top: 20),
                   child: Center(
-                    child: TextButton(
-                      onPressed: _requestAllPermissions,
-                      child: const Text("点击一次性授权所有", style: TextStyle(color: Colors.blueAccent, fontSize: 16)),
-                    ),
+                    // ✅ [修改] 如果正在请求，显示转圈圈
+                    child: _isRequesting 
+                      ? const CircularProgressIndicator(color: Colors.blueAccent)
+                      : TextButton(
+                          onPressed: _requestAllPermissions,
+                          child: const Text("点击一次性授权所有", style: TextStyle(color: Colors.blueAccent, fontSize: 16)),
+                        ),
                   ),
                 ),
 
               const Spacer(),
-              
-              // --- 分割线 ---
               Divider(color: Colors.grey[800]),
               const SizedBox(height: 10),
               
-              // --- 可选项 (下部) ---
+              // --- 自动保存开关 ---
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -140,9 +154,7 @@ class _PermissionScreenState extends State<PermissionScreen> {
                     value: _autoSaveEnabled,
                     activeColor: Colors.yellowAccent,
                     trackColor: MaterialStateProperty.all(Colors.grey[800]),
-                    onChanged: (val) {
-                      setState(() => _autoSaveEnabled = val);
-                    },
+                    onChanged: (val) => setState(() => _autoSaveEnabled = val),
                   ),
                 ],
               ),
@@ -154,7 +166,7 @@ class _PermissionScreenState extends State<PermissionScreen> {
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton(
-                  onPressed: canEnter ? _enterApp : null, // 没权限时禁用点击
+                  onPressed: canEnter ? _enterApp : null,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.yellowAccent,
                     disabledBackgroundColor: Colors.grey[900],
@@ -177,7 +189,6 @@ class _PermissionScreenState extends State<PermissionScreen> {
     );
   }
 
-  // 辅助组件：权限列表项
   Widget _buildPermissionItem(String label, IconData icon, bool isGranted) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 20),
@@ -186,7 +197,6 @@ class _PermissionScreenState extends State<PermissionScreen> {
           Icon(icon, color: Colors.white, size: 28),
           const SizedBox(width: 16),
           Expanded(child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 18))),
-          // 状态图标：绿勾 or 灰圈
           Icon(
             isGranted ? Icons.check_circle : Icons.radio_button_unchecked,
             color: isGranted ? Colors.green : Colors.grey,

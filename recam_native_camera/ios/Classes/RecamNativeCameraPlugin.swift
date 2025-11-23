@@ -1,8 +1,7 @@
 import Flutter
 import UIKit
-import Photos // 👈 必须加这个
+import Photos
 
-// 1. 插件入口
 public class RecamNativeCameraPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     public static var aiEventSink: FlutterEventSink?
 
@@ -26,37 +25,33 @@ public class RecamNativeCameraPlugin: NSObject, FlutterPlugin, FlutterStreamHand
     }
 }
 
-// 2. 工厂类
 class RecamCameraFactory: NSObject, FlutterPlatformViewFactory {
     private var messenger: FlutterBinaryMessenger
-
     init(messenger: FlutterBinaryMessenger) {
         self.messenger = messenger
         super.init()
     }
-
     func create(withFrame frame: CGRect, viewIdentifier viewId: Int64, arguments args: Any?) -> FlutterPlatformView {
         return RecamNativeCameraView(frame: frame, viewIdentifier: viewId, arguments: args, messenger: messenger)
     }
 }
 
-// 3. 视图类
 class RecamNativeCameraView: NSObject, FlutterPlatformView, CameraViewControllerDelegate {
-    
     private var _view: UIView
     private var _controller: CameraViewController
     private var _methodChannel: FlutterMethodChannel
     
-    // 暂存 Flutter 的回调
+    // 暂存回调
     private var _takePhotoResult: FlutterResult?
+    // 暂存当前拍照想要的比例 (默认修正为 4:3)
+    private var _currentRatio: String = "4:3"
 
     init(frame: CGRect, viewIdentifier viewId: Int64, arguments args: Any?, messenger: FlutterBinaryMessenger) {
         _view = UIView(frame: frame)
         _controller = CameraViewController()
         _methodChannel = FlutterMethodChannel(name: "recam_native_camera/methods", binaryMessenger: messenger)
-        
         super.init()
-
+        
         _controller.view.frame = _view.bounds
         _controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         _view.addSubview(_controller.view)
@@ -70,8 +65,16 @@ class RecamNativeCameraView: NSObject, FlutterPlatformView, CameraViewController
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
         case "takePhoto":
+            // 1. 接收参数：这次拍照要什么比例？
+            if let args = call.arguments as? [String: Any],
+               let ratio = args["ratio"] as? String {
+                _currentRatio = ratio
+            } else {
+                _currentRatio = "4:3" // 默认
+            }
+            
             _takePhotoResult = result
-            print("📸 Swift: 收到拍照请求...")
+            print("📸 Swift: 收到拍照请求，目标比例: \(_currentRatio)")
             _controller.capturePhoto()
             
         case "switchCamera":
@@ -92,11 +95,10 @@ class RecamNativeCameraView: NSObject, FlutterPlatformView, CameraViewController
              result(nil)
              
         case "saveToGallery":
-            if let args = call.arguments as? [String: Any],
-               let path = args["path"] as? String {
+            if let args = call.arguments as? [String: Any], let path = args["path"] as? String {
                 saveToAlbum(path: path, result: result)
             } else {
-                result(FlutterError(code: "ARGS_ERROR", message: "Path is missing", details: nil))
+                result(FlutterError(code: "ARGS_ERROR", message: "Path missing", details: nil))
             }
 
         default:
@@ -104,19 +106,29 @@ class RecamNativeCameraView: NSObject, FlutterPlatformView, CameraViewController
         }
     }
     
-    // MARK: - 引擎回调
+    // MARK: - 引擎回调 (🔴 核心修改：存到 Documents 目录)
     func cameraViewController(_ controller: CameraViewController, didCapture image: UIImage) {
-        print("✅ Swift: 引擎拍到了照片，准备写入磁盘...")
+        print("✅ Swift: 拍到原始照片 \(image.size)，准备处理...")
         
-        let fileName = "recam_\(Int(Date().timeIntervalSince1970)).jpg"
-        let tempDir = FileManager.default.temporaryDirectory
-        let fileURL = tempDir.appendingPathComponent(fileName)
-        
-        DispatchQueue.global(qos: .background).async {
+        DispatchQueue.global(qos: .userInitiated).async {
+            // 1. 根据比例裁剪图片
+            var finalImage = image
+            if self._currentRatio == "1:1" {
+                finalImage = self.cropToSquare(image: image)
+                print("✂️ 已裁剪为 1:1，新尺寸: \(finalImage.size)")
+            }
+            
+            // 2. ✅ [修改] 获取 App 文档目录 (永久存储，解决红X问题)
+            let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
+            let docDir = paths[0]
+            
+            let fileName = "recam_\(Int(Date().timeIntervalSince1970)).jpg"
+            let fileURL = docDir.appendingPathComponent(fileName)
+            
             do {
-                if let data = image.jpegData(compressionQuality: 0.9) {
+                if let data = finalImage.jpegData(compressionQuality: 0.9) {
                     try data.write(to: fileURL)
-                    print("💾 Swift: 已保存到临时目录 -> \(fileURL.path)")
+                    print("💾 Swift: 已永久保存 -> \(fileURL.path)")
                     
                     DispatchQueue.main.async {
                         if let callback = self._takePhotoResult {
@@ -126,13 +138,29 @@ class RecamNativeCameraView: NSObject, FlutterPlatformView, CameraViewController
                     }
                 }
             } catch {
-                print("❌ Swift Save Error: \(error)")
+                print("❌ Save Error: \(error)")
                 DispatchQueue.main.async {
                     self._takePhotoResult?(FlutterError(code: "SAVE_ERROR", message: error.localizedDescription, details: nil))
                     self._takePhotoResult = nil
                 }
             }
         }
+    }
+    
+    // ✂️ 裁剪算法：把长方形切成正方形 (取中间)
+    private func cropToSquare(image: UIImage) -> UIImage {
+        let originalWidth  = CGFloat(image.size.width)
+        let originalHeight = CGFloat(image.size.height)
+        let edge = min(originalWidth, originalHeight)
+        
+        let posX = (originalWidth - edge) / 2.0
+        let posY = (originalHeight - edge) / 2.0
+        
+        let cropSquare = CGRect(x: posX, y: posY, width: edge, height: edge)
+        
+        // 修正图片方向 (Fix Orientation)
+        guard let imageRef = image.cgImage?.cropping(to: cropSquare) else { return image }
+        return UIImage(cgImage: imageRef, scale: image.scale, orientation: image.imageOrientation)
     }
     
     func cameraViewController(_ controller: CameraViewController, didFail error: Error) {
@@ -145,17 +173,10 @@ class RecamNativeCameraView: NSObject, FlutterPlatformView, CameraViewController
         sink(["filmId": result.preset.id, "message": result.debugText])
     }
     
-    // MARK: - 保存到系统相册 (修复了版本兼容性问题)
     private func saveToAlbum(path: String, result: @escaping FlutterResult) {
         PHPhotoLibrary.requestAuthorization { status in
             var isAuthorized = (status == .authorized)
-            
-            // 🚑 修复点：加了 #available 判断，只在 iOS 14+ 上检查 .limited
-            if #available(iOS 14, *) {
-                if status == .limited {
-                    isAuthorized = true
-                }
-            }
+            if #available(iOS 14, *) { if status == .limited { isAuthorized = true } }
             
             if isAuthorized {
                 PHPhotoLibrary.shared().performChanges({
@@ -163,20 +184,11 @@ class RecamNativeCameraView: NSObject, FlutterPlatformView, CameraViewController
                     PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)
                 }) { success, error in
                     DispatchQueue.main.async {
-                        if success {
-                            print("💾 Swift: 系统相册保存成功！")
-                            result(true)
-                        } else {
-                            print("❌ Swift: 系统相册保存失败 - \(String(describing: error))")
-                            result(false)
-                        }
+                        result(success)
                     }
                 }
             } else {
-                print("❌ Swift: 没有相册权限")
-                DispatchQueue.main.async {
-                    result(false)
-                }
+                DispatchQueue.main.async { result(false) }
             }
         }
     }
