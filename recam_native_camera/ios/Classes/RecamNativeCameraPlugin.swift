@@ -1,5 +1,6 @@
 import Flutter
 import UIKit
+import Photos // 👈 必须加这个
 
 // 1. 插件入口
 public class RecamNativeCameraPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
@@ -39,13 +40,15 @@ class RecamCameraFactory: NSObject, FlutterPlatformViewFactory {
     }
 }
 
-// 3. 视图类（核心修改：增加了存图逻辑）
+// 3. 视图类
 class RecamNativeCameraView: NSObject, FlutterPlatformView, CameraViewControllerDelegate {
     
     private var _view: UIView
     private var _controller: CameraViewController
     private var _methodChannel: FlutterMethodChannel
-    private var _takePhotoResult: FlutterResult? // 暂存回调
+    
+    // 暂存 Flutter 的回调
+    private var _takePhotoResult: FlutterResult?
 
     init(frame: CGRect, viewIdentifier viewId: Int64, arguments args: Any?, messenger: FlutterBinaryMessenger) {
         _view = UIView(frame: frame)
@@ -67,7 +70,6 @@ class RecamNativeCameraView: NSObject, FlutterPlatformView, CameraViewController
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
         case "takePhoto":
-            // 暂存 result，等拍完再回话
             _takePhotoResult = result
             print("📸 Swift: 收到拍照请求...")
             _controller.capturePhoto()
@@ -88,6 +90,14 @@ class RecamNativeCameraView: NSObject, FlutterPlatformView, CameraViewController
                  _controller.setZoomFactor(CGFloat(zoom))
              }
              result(nil)
+             
+        case "saveToGallery":
+            if let args = call.arguments as? [String: Any],
+               let path = args["path"] as? String {
+                saveToAlbum(path: path, result: result)
+            } else {
+                result(FlutterError(code: "ARGS_ERROR", message: "Path is missing", details: nil))
+            }
 
         default:
             result(FlutterMethodNotImplemented)
@@ -96,22 +106,19 @@ class RecamNativeCameraView: NSObject, FlutterPlatformView, CameraViewController
     
     // MARK: - 引擎回调
     func cameraViewController(_ controller: CameraViewController, didCapture image: UIImage) {
-        print("✅ Swift: 拍到照片，正在写入临时文件...")
+        print("✅ Swift: 引擎拍到了照片，准备写入磁盘...")
         
-        // 生成文件名
         let fileName = "recam_\(Int(Date().timeIntervalSince1970)).jpg"
         let tempDir = FileManager.default.temporaryDirectory
         let fileURL = tempDir.appendingPathComponent(fileName)
         
         DispatchQueue.global(qos: .background).async {
             do {
-                // 压缩并写入
                 if let data = image.jpegData(compressionQuality: 0.9) {
                     try data.write(to: fileURL)
-                    print("💾 Saved to: \(fileURL.path)")
+                    print("💾 Swift: 已保存到临时目录 -> \(fileURL.path)")
                     
                     DispatchQueue.main.async {
-                        // 回复 Flutter：成功了，路径给你！
                         if let callback = self._takePhotoResult {
                             callback(fileURL.path)
                             self._takePhotoResult = nil
@@ -119,7 +126,7 @@ class RecamNativeCameraView: NSObject, FlutterPlatformView, CameraViewController
                     }
                 }
             } catch {
-                print("❌ Save Error: \(error)")
+                print("❌ Swift Save Error: \(error)")
                 DispatchQueue.main.async {
                     self._takePhotoResult?(FlutterError(code: "SAVE_ERROR", message: error.localizedDescription, details: nil))
                     self._takePhotoResult = nil
@@ -136,5 +143,41 @@ class RecamNativeCameraView: NSObject, FlutterPlatformView, CameraViewController
     func cameraViewController(_ controller: CameraViewController, didUpdateLiveRecommendation result: AiRecommendResult) {
         guard let sink = RecamNativeCameraPlugin.aiEventSink else { return }
         sink(["filmId": result.preset.id, "message": result.debugText])
+    }
+    
+    // MARK: - 保存到系统相册 (修复了版本兼容性问题)
+    private func saveToAlbum(path: String, result: @escaping FlutterResult) {
+        PHPhotoLibrary.requestAuthorization { status in
+            var isAuthorized = (status == .authorized)
+            
+            // 🚑 修复点：加了 #available 判断，只在 iOS 14+ 上检查 .limited
+            if #available(iOS 14, *) {
+                if status == .limited {
+                    isAuthorized = true
+                }
+            }
+            
+            if isAuthorized {
+                PHPhotoLibrary.shared().performChanges({
+                    let url = URL(fileURLWithPath: path)
+                    PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)
+                }) { success, error in
+                    DispatchQueue.main.async {
+                        if success {
+                            print("💾 Swift: 系统相册保存成功！")
+                            result(true)
+                        } else {
+                            print("❌ Swift: 系统相册保存失败 - \(String(describing: error))")
+                            result(false)
+                        }
+                    }
+                }
+            } else {
+                print("❌ Swift: 没有相册权限")
+                DispatchQueue.main.async {
+                    result(false)
+                }
+            }
+        }
     }
 }
