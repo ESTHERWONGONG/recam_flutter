@@ -3,13 +3,12 @@ import '../editor_constants.dart';
 
 class UnifiedEditorPanel extends StatefulWidget {
   final List<EditorCategory> categories; // 数据源
-  final bool showSlider;                 // 是否显示强度滑杆
-  final VoidCallback onClose;            // 点击关闭/确认的回调
+  // ❌ 删掉了 showSlider，不再由内部控制
+  final VoidCallback onClose;            // 关闭回调
 
   const UnifiedEditorPanel({
     super.key,
     required this.categories,
-    this.showSlider = true,
     required this.onClose,
   });
 
@@ -18,9 +17,8 @@ class UnifiedEditorPanel extends StatefulWidget {
 }
 
 class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTickerProviderStateMixin {
-  int _selectedCategoryIndex = 0; // 当前选中的分类 Tab
-  int _selectedItemIndex = 0;     // 当前选中的资源
-  double _intensity = 0.8;        // 滑杆强度 (0.0 - 1.0)
+  int _selectedCategoryIndex = 0; 
+  int _selectedItemIndex = 0;     
   late TabController _tabController;
 
   @override
@@ -45,61 +43,34 @@ class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTick
     final currentCategory = widget.categories[_selectedCategoryIndex];
 
     return Container(
-      color: const Color(0xFF111111), // 深色底板
+      color: const Color(0xFF111111),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: MainAxisSize.min, // 高度自适应，不撑满
         children: [
-          // 1. 调节层 (Slider) - 可选
-          if (widget.showSlider)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              child: Row(
-                children: [
-                  const Icon(Icons.tune, color: Colors.grey, size: 16),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        trackHeight: 2,
-                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                        overlayShape: SliderComponentShape.noOverlay,
-                      ),
-                      child: Slider(
-                        value: _intensity,
-                        activeColor: Colors.yellowAccent,
-                        inactiveColor: Colors.grey[800],
-                        onChanged: (v) => setState(() => _intensity = v),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Text("${(_intensity * 100).toInt()}", 
-                    style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                ],
-              ),
+          // 1. 分类层 (Tabs) - 样式微调更精致
+          Container(
+            height: 40,
+            margin: const EdgeInsets.only(top: 10),
+            child: TabBar(
+              controller: _tabController,
+              isScrollable: true,
+              labelColor: Colors.yellowAccent,
+              labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+              unselectedLabelColor: Colors.grey,
+              indicatorColor: Colors.yellowAccent,
+              indicatorSize: TabBarIndicatorSize.label,
+              dividerColor: Colors.transparent,
+              tabs: widget.categories.map((c) => Tab(text: c.name)).toList(),
+              onTap: (index) => setState(() => _selectedCategoryIndex = index),
             ),
-
-          // 2. 分类层 (Tabs)
-          TabBar(
-            controller: _tabController,
-            isScrollable: true, // 允许横向滚动
-            labelColor: Colors.yellowAccent,
-            unselectedLabelColor: Colors.grey,
-            indicatorColor: Colors.yellowAccent,
-            indicatorSize: TabBarIndicatorSize.label,
-            dividerColor: Colors.transparent,
-            tabs: widget.categories.map((c) => Tab(text: c.name)).toList(),
-            onTap: (index) {
-              setState(() => _selectedCategoryIndex = index);
-            },
           ),
 
-          // 3. 资源选择层 (List)
+          // 2. 资源选择层 (List)
           SizedBox(
-            height: 90, // 固定高度
+            height: 100, 
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
               itemCount: currentCategory.items.length,
               itemBuilder: (context, index) {
                 final item = currentCategory.items[index];
@@ -107,43 +78,36 @@ class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTick
 
                 return GestureDetector(
                   onTap: () => setState(() => _selectedItemIndex = index),
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 6),
-                    width: 60,
-                    decoration: BoxDecoration(
-                      color: item.color.withOpacity(0.2),
-                      border: isSelected 
-                          ? Border.all(color: Colors.yellowAccent, width: 2) 
-                          : Border.all(color: Colors.transparent),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        // 假装这是缩略图
-                        Container(
-                          width: 30, height: 30,
-                          decoration: BoxDecoration(
-                            color: item.color,
-                            shape: BoxShape.circle,
-                          ),
+                  child: Column(
+                    children: [
+                      Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 10),
+                        width: 48, height: 48,
+                        decoration: BoxDecoration(
+                          color: item.color, // 以后换成 Image.asset
+                          borderRadius: BorderRadius.circular(8), // 圆角矩形 (Dazz风格)
+                          border: isSelected 
+                              ? Border.all(color: Colors.yellowAccent, width: 2.5) 
+                              : Border.all(color: Colors.transparent, width: 2.5),
                         ),
-                        const SizedBox(height: 4),
-                        Text(item.name, 
-                          style: TextStyle(
-                            color: isSelected ? Colors.white : Colors.grey, 
-                            fontSize: 10
-                          )
-                        ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(item.name, 
+                        style: TextStyle(
+                          color: isSelected ? Colors.white : Colors.grey, 
+                          fontSize: 10,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal
+                        )
+                      ),
+                    ],
                   ),
                 );
               },
             ),
           ),
 
-          // 4. 底部控制层 (Action Bar)
+          // 3. 底部控制层 (Action Bar)
+          // 跟你的截图 2 保持一致：左边禁止，右边收起
           Container(
             height: 50,
             padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -153,17 +117,13 @@ class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTick
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // 左边：无效果 / 撤销 (暂时放个禁止图标)
                 IconButton(
-                  icon: const Icon(Icons.block, color: Colors.grey, size: 20),
-                  onPressed: () {
-                    // TODO: 清除滤镜逻辑
-                  },
+                  icon: const Icon(Icons.block, color: Colors.grey, size: 22),
+                  onPressed: () { }, // TODO: 清除效果
                 ),
-                // 右边：确认/收起 (核心交互：回到拍摄模式)
                 IconButton(
-                  icon: const Icon(Icons.keyboard_arrow_down, color: Colors.white, size: 28),
-                  onPressed: widget.onClose, // 调用外部传入的关闭逻辑
+                  icon: const Icon(Icons.keyboard_arrow_down, color: Colors.white, size: 30),
+                  onPressed: widget.onClose, 
                 ),
               ],
             ),
