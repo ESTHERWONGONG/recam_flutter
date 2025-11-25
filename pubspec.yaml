@@ -27,14 +27,20 @@ dependencies:
   # --- 权限管理专家 ---
   permission_handler: ^11.0.1
 
-  # --- ✅ [v1.5 新增] 外部跳转 (跳小红书/浏览器/邮箱) ---
+  # --- 外部跳转 ---
   url_launcher: ^6.2.4
 
-  # --- ✅ [v1.5 新增] 获取 App 版本号 ---
+  # --- 获取 App 版本号 ---
   package_info_plus: ^5.0.1
 
   # --- 备用相机库 ---
   camera: ^0.10.5
+
+  # ✅ [本次新增] 截图库 (用于保存编辑后的图片)
+  screenshot: ^3.0.0
+
+  # ✅ [本次新增] 路径库 (用于获取临时文件目录)
+  path_provider: ^2.1.1
 
 dev_dependencies:
   flutter_test:

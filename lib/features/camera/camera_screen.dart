@@ -1,6 +1,10 @@
 import 'dart:async'; 
+import 'dart:io';
+import 'dart:typed_data'; // 用于处理图片二进制数据
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart'; // 获取临时路径
+import 'package:screenshot/screenshot.dart';       // 截图库
 import 'package:shared_preferences/shared_preferences.dart'; 
 import '../../services/native_camera_service.dart'; 
 import '../../models/ai_recommendation.dart'; 
@@ -19,12 +23,15 @@ class CameraScreen extends StatefulWidget {
 class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMixin {
   String _flashMode = "off";
   final NativeCameraService _cameraService = NativeCameraService();
+  
+  // ✅ [新增] 截图控制器，用于后台合成效果
+  final ScreenshotController _screenshotController = ScreenshotController();
+
   bool _isShooting = false;
   String _currentRatio = "4:3"; 
-  
   EditorMode _editorMode = EditorMode.none; 
   
-  // ✅ [新增] 记录用户当前选择的 ID，用于逻辑闭环
+  // ✅ [新增] 状态记录：记住用户在拍照前选了什么
   String _selectedFilterId = "none";
   String _selectedFrameId = "none";
   String _selectedStickerId = "none";
@@ -48,6 +55,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     _galleryAnimController = AnimationController(vsync: this, duration: const Duration(milliseconds: 150));
     _galleryScaleAnim = Tween<double>(begin: 1.0, end: 0.7).animate(CurvedAnimation(parent: _galleryAnimController, curve: Curves.easeInOut));
     _aiFadeController = AnimationController(vsync: this, duration: const Duration(seconds: 2), value: 0.0);
+    
     _cameraService.aiStream.listen((data) async {
       final prefs = await SharedPreferences.getInstance();
       if (prefs.getBool('enable_ai_recommendation') ?? true) _handleNewAiData(data);
@@ -85,11 +93,13 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 
     return Scaffold(
       backgroundColor: Colors.black,
+      // 防止键盘或面板顶起导致溢出
       resizeToAvoidBottomInset: false,
       body: SafeArea(
-        bottom: false,
+        bottom: false, // 底部区域由 Stack 内部组件自己处理
         child: Stack(
           children: [
+            // 1. 主内容 (相机流 + 遮罩 + 顶部栏)
             Column(
               children: [
                 _buildTopBar(),
@@ -104,6 +114,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                         creationParams: {},
                         creationParamsCodec: StandardMessageCodec(),
                       ),
+                      // 遮罩层 (处理 1:1 比例的黑边)
                       Column(
                         children: [
                           AnimatedContainer(duration: const Duration(milliseconds: 300), height: maskHeight, width: double.infinity, color: Colors.black),
@@ -111,6 +122,14 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                           AnimatedContainer(duration: const Duration(milliseconds: 300), height: maskHeight, width: double.infinity, color: Colors.black),
                         ],
                       ),
+                      
+                      // ✅ 实时预览层占位 (这里简单模拟，实际需接 Shader)
+                      if (_selectedFilterId == 'f_c200')
+                         IgnorePointer(child: Container(color: Colors.orange.withOpacity(0.05))), // 模拟一点暖色
+                      if (_selectedGrainId != 'none') 
+                        IgnorePointer(child: Container(color: Colors.white.withOpacity(0.05))), // 模拟微弱颗粒
+
+                      // AI 气泡
                       Positioned(
                         bottom: 40 + maskHeight, left: 20, right: 20,
                         child: FadeTransition(
@@ -118,21 +137,27 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                           child: _currentRecommendation != null ? _buildNewAiBubble(_currentRecommendation!) : const SizedBox(),
                         ),
                       ),
+                      
+                      // 滑杆 (仅在滤镜模式显示)
                       if (_editorMode == EditorMode.filter)
                         AnimatedPositioned(duration: const Duration(milliseconds: 300), bottom: 10 + maskHeight, left: 20, right: 20, child: _buildIndependentSlider()),
+                      
+                      // 倒计时数字
                       if (_isCountingDown)
                         Center(child: Text("$_currentCount", style: const TextStyle(color: Colors.white, fontSize: 100, fontWeight: FontWeight.bold, shadows: [Shadow(blurRadius: 10, color: Colors.black)]))),
                     ],
                   ),
                 ),
-                const Spacer(), 
+                const Spacer(), // 占位，把下面留给底部面板
               ],
             ),
 
+            // 2. 底部交互区 (固定在最底部)
             Positioned(
               left: 0, right: 0, bottom: 0,
               child: Container(
                 color: const Color(0xFF111111),
+                // 让子组件决定高度，配合 SafeArea 使用
                 child: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 300),
                   transitionBuilder: (Widget child, Animation<double> animation) {
@@ -150,6 +175,8 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       ),
     );
   }
+
+  // --- Components ---
 
   Widget _buildTopBar() {
     if (_editorMode != EditorMode.none) return const SizedBox(height: 50);
@@ -175,6 +202,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   }
 
   Widget _buildBottomPanelContent() {
+    // 如果处于编辑模式，显示二级面板
     if (_editorMode != EditorMode.none) {
       List<EditorCategory> categories = [];
       Key key = const ValueKey('Empty');
@@ -192,8 +220,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
           key: key,
           categories: categories,
           onClose: () => setState(() => _editorMode = EditorMode.none),
-          
-          // ✅ [核心逻辑] 处理选中事件，记录状态
+          // ✅ 记录用户选择，用于拍照时合成
           onItemTap: (item) {
             setState(() {
               if (_editorMode == EditorMode.filter) _selectedFilterId = item.id;
@@ -201,16 +228,12 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
               if (_editorMode == EditorMode.sticker) _selectedStickerId = item.id;
               if (_editorMode == EditorMode.grain) _selectedGrainId = item.id;
             });
-            
-            // 打印日志证明逻辑通了
-            print("📸 应用效果: Mode=$_editorMode, Item=${item.name} (ID:${item.id})");
-            print("当前状态: Filter=$_selectedFilterId, Frame=$_selectedFrameId");
-            
-            // TODO: 调用 _cameraService.updateEffect(...) 发送给 Native
+            print("📸 选中效果: ${item.name} (ID: ${item.id})");
           },
         ),
       );
     }
+    // 默认显示一级拍照面板
     return _buildCapturePanel();
   }
 
@@ -226,13 +249,12 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween, 
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // ✅ [UI状态] 可以根据 _selectedFrameId != 'none' 来改变图标颜色 (可选)
-                  _buildFeatureIcon(Icons.crop_free, "边框", () => setState(() => _editorMode = EditorMode.frame)),
-                  _buildFeatureIcon(Icons.face, "贴纸", () => setState(() => _editorMode = EditorMode.sticker)),
-                  _buildFeatureIcon(Icons.grain, "颗粒", () => setState(() => _editorMode = EditorMode.grain)),
-                  _buildFeatureIcon(Icons.color_lens, "滤镜", () => setState(() => _editorMode = EditorMode.filter)),
+                  _buildFeatureIcon(Icons.crop_free, "边框", () => setState(() => _editorMode = EditorMode.frame), isActive: _selectedFrameId != 'none'),
+                  _buildFeatureIcon(Icons.face, "贴纸", () => setState(() => _editorMode = EditorMode.sticker), isActive: _selectedStickerId != 'none'),
+                  _buildFeatureIcon(Icons.grain, "颗粒", () => setState(() => _editorMode = EditorMode.grain), isActive: _selectedGrainId != 'none'),
+                  _buildFeatureIcon(Icons.color_lens, "滤镜", () => setState(() => _editorMode = EditorMode.filter), isActive: _selectedFilterId != 'none'),
                 ],
               ),
             ),
@@ -254,10 +276,14 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     );
   }
 
-  Widget _buildFeatureIcon(IconData icon, String label, VoidCallback onTap) {
+  Widget _buildFeatureIcon(IconData icon, String label, VoidCallback onTap, {bool isActive = false}) {
     return GestureDetector(
       onTap: onTap,
-      child: Column(children: [Icon(icon, color: Colors.white, size: 24), const SizedBox(height: 4), Text(label, style: const TextStyle(color: Colors.white, fontSize: 10))]),
+      child: Column(children: [
+        Icon(icon, color: isActive ? Colors.yellowAccent : Colors.white, size: 24), 
+        const SizedBox(height: 4), 
+        Text(label, style: TextStyle(color: isActive ? Colors.yellowAccent : Colors.white, fontSize: 10))
+      ]),
     );
   }
 
@@ -272,17 +298,82 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     } else { await _performCapture(); }
   }
 
+  // ✅ [核心逻辑] 拍照 -> 合成 -> 保存
   Future<void> _performCapture() async {
     setState(() => _isShooting = true);
     try {
-      final path = await _cameraService.takePhoto(_currentRatio);
-      if (path.isEmpty) { _showErrorDialog("存储空间", "Full"); return; }
+      print("📸 1. 拍摄原始图片...");
+      final rawPath = await _cameraService.takePhoto(_currentRatio);
+      if (rawPath.isEmpty) { _showErrorDialog("错误", "拍照失败"); return; }
+
+      String finalPath = rawPath;
+
+      // 检查是否需要合成特效
+      bool hasEffects = _selectedFilterId != 'none' || _selectedFrameId != 'none' || 
+                        _selectedStickerId != 'none' || _selectedGrainId != 'none';
+
+      if (hasEffects) {
+        print("✨ 2. 检测到特效，开始后台合成...");
+        
+        // 构建不可见的特效层 (逻辑与 Gallery 一致)
+        final effectWidget = Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.file(File(rawPath), fit: BoxFit.cover),
+            
+            // 模拟滤镜 (用 Container 颜色模拟，修复了 blendMode 报错)
+            if (_selectedFilterId == 'f_c200') 
+              Container(color: Colors.orange.withOpacity(0.1)), 
+            
+            // 模拟颗粒
+            if (_selectedGrainId != 'none') 
+              Container(color: Colors.white.withOpacity(0.05)),
+              
+            // 模拟边框
+            if (_selectedFrameId != 'none') 
+              Container(decoration: BoxDecoration(border: Border.all(color: Colors.white, width: 20))),
+          ],
+        );
+
+        // 使用 screenshot 库生成新图
+        final Uint8List imageBytes = await _screenshotController.captureFromWidget(
+          Container(
+            width: 1080, 
+            height: _currentRatio == "1:1" ? 1080 : 1440, 
+            child: effectWidget
+          ),
+          pixelRatio: 2.0, 
+          delay: const Duration(milliseconds: 50),
+        );
+
+        // 写入临时文件
+        final directory = await getTemporaryDirectory();
+        final fileName = 'recam_baked_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        final File processedFile = File('${directory.path}/$fileName');
+        await processedFile.writeAsBytes(imageBytes);
+        
+        finalPath = processedFile.path;
+        print("✅ 合成完成: $finalPath");
+      }
+
+      // 保存流程
+      // 1. 存入 App 内部相册
+      await PhotoStorage.savePhoto(finalPath);
+
+      // 2. 根据设置，存入系统相册
       final prefs = await SharedPreferences.getInstance();
-      if (prefs.getBool('auto_save_to_gallery') ?? true) await _cameraService.saveToGallery(path);
-      await PhotoStorage.savePhoto(path);
+      if (prefs.getBool('auto_save_to_gallery') ?? true) {
+        await _cameraService.saveToGallery(finalPath);
+      }
+      
       _runGalleryAnimation();
-    } catch (e) { _showErrorDialog("Error", "$e"); } 
-    finally { if (mounted) setState(() => _isShooting = false); }
+      
+    } catch (e) { 
+      print("Capture Error: $e");
+      _showErrorDialog("Error", "$e"); 
+    } finally { 
+      if (mounted) setState(() => _isShooting = false); 
+    }
   }
 
   Widget _buildNewAiBubble(AiRecommendation data) {
