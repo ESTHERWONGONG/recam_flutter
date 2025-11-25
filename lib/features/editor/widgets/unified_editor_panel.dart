@@ -19,7 +19,7 @@ class UnifiedEditorPanel extends StatefulWidget {
 
 class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTickerProviderStateMixin {
   int _selectedCategoryIndex = 0; 
-  int _selectedItemIndex = -1; 
+  int _selectedItemIndex = 0; 
   late TabController _tabController;
 
   @override
@@ -28,7 +28,10 @@ class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTick
     _tabController = TabController(length: widget.categories.length, vsync: this);
     _tabController.addListener(() {
       if (_tabController.indexIsChanging) {
-        setState(() => _selectedCategoryIndex = _tabController.index);
+        setState(() {
+          _selectedCategoryIndex = _tabController.index;
+          _selectedItemIndex = 0; 
+        });
       }
     });
   }
@@ -40,7 +43,7 @@ class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTick
       _tabController.dispose();
       _tabController = TabController(length: widget.categories.length, vsync: this);
       _selectedCategoryIndex = 0;
-      _selectedItemIndex = -1;
+      _selectedItemIndex = 0;
     }
   }
 
@@ -60,41 +63,18 @@ class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTick
         color: Color(0xFF111111),
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      // ✅ [核心修改] 删除了这里的 padding: bottomPadding
-      // 因为父页面已经套了 SafeArea，这里不需要再加，否则会有双下巴
       child: Column(
         mainAxisSize: MainAxisSize.min, 
         children: [
-          // 1. 顶部 TabBar
-          if (widget.categories.length > 1) 
-            Container(
-              height: 40,
-              margin: const EdgeInsets.only(top: 10),
-              child: TabBar(
-                controller: _tabController,
-                isScrollable: true,
-                labelColor: Colors.yellowAccent,
-                labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                unselectedLabelColor: Colors.grey,
-                indicatorColor: Colors.yellowAccent,
-                indicatorSize: TabBarIndicatorSize.label,
-                dividerColor: Colors.transparent,
-                tabs: widget.categories.map((c) => Tab(text: c.title)).toList(),
-                onTap: (index) => setState(() => _selectedCategoryIndex = index),
-              ),
-            )
-          else 
-            Container(
-              alignment: Alignment.centerLeft,
-              padding: const EdgeInsets.only(left: 20, top: 15, bottom: 5),
-              child: Text(currentCategory.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
+          // 1. 顶部 TabBar / 标题
+          _buildTopBar(currentCategory),
 
           // 2. 资源列表
           SizedBox(
             height: 120, 
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
+              // ✅ 列表左间距 16，这是我们的对齐基准线
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               itemCount: currentCategory.items.length,
               separatorBuilder: (_, __) => const SizedBox(width: 16),
@@ -109,18 +89,28 @@ class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTick
                   },
                   child: Column(
                     children: [
+                      // 图标区域
                       Container(
                         width: 64, height: 64,
                         decoration: BoxDecoration(
-                          color: item.color ?? const Color(0xFF222222), 
+                          // 选中：深黄背景 + 粗黄框
+                          color: isSelected 
+                              ? Colors.yellowAccent.withOpacity(0.2) 
+                              : (item.color ?? const Color(0xFF1A1A1A)), 
                           borderRadius: BorderRadius.circular(12),
-                          border: isSelected 
-                              ? Border.all(color: Colors.yellowAccent, width: 2) 
-                              : null,
+                          border: Border.all(
+                            color: isSelected ? Colors.yellowAccent : Colors.transparent,
+                            width: 3.0, 
+                          ),
                         ),
                         alignment: Alignment.center,
                         child: (item.color == null && item.iconPath.isEmpty)
-                            ? Text(item.name.isNotEmpty ? item.name[0] : "", style: const TextStyle(color: Colors.white30, fontSize: 20))
+                            ? Text(item.name.isNotEmpty ? item.name[0] : "", 
+                                style: TextStyle(
+                                  color: isSelected ? Colors.white : Colors.white30, 
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold
+                                ))
                             : null,
                       ),
                       const SizedBox(height: 8),
@@ -150,7 +140,12 @@ class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTick
               children: [
                 IconButton(
                   icon: const Icon(Icons.block, color: Colors.white38, size: 20),
-                  onPressed: () => setState(() => _selectedItemIndex = -1), 
+                  onPressed: () {
+                    setState(() => _selectedItemIndex = 0); 
+                    if (widget.categories.isNotEmpty && widget.categories[_selectedCategoryIndex].items.isNotEmpty) {
+                       widget.onItemTap?.call(widget.categories[_selectedCategoryIndex].items[0]);
+                    }
+                  },
                 ),
                 IconButton(
                   icon: const Icon(Icons.keyboard_arrow_down, color: Colors.white70, size: 28),
@@ -162,5 +157,51 @@ class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTick
         ],
       ),
     );
+  }
+
+  Widget _buildTopBar(EditorCategory currentCategory) {
+    if (widget.categories.length > 1) {
+      return Container(
+        height: 44,
+        margin: const EdgeInsets.only(top: 8),
+        child: TabBar(
+          controller: _tabController,
+          isScrollable: true,
+          // ✅ [核心对齐修复]
+          // 1. 强制靠左对齐 (Flutter 3.13+)
+          tabAlignment: TabAlignment.start,
+          // 2. 容器左边距设为 16 (对齐基准线)
+          padding: const EdgeInsets.only(left: 16), 
+          // 3. labelPadding 只设右边距 (拉开 Tab 间距)，左边设 0，保证文字贴着容器边缘
+          labelPadding: const EdgeInsets.only(right: 24), 
+          
+          labelColor: Colors.white,
+          labelStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          unselectedLabelColor: Colors.grey,
+          unselectedLabelStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.normal),
+          indicatorColor: Colors.yellowAccent,
+          indicatorSize: TabBarIndicatorSize.label,
+          indicatorWeight: 2,
+          dividerColor: Colors.transparent,
+          // 去掉点击波纹，看起来更干净
+          overlayColor: MaterialStateProperty.all(Colors.transparent),
+          tabs: widget.categories.map((c) => Tab(text: c.title)).toList(),
+          onTap: (index) => setState(() => _selectedCategoryIndex = index),
+        ),
+      );
+    } else {
+      // 单分类标题
+      return Container(
+        height: 44,
+        margin: const EdgeInsets.only(top: 8),
+        alignment: Alignment.centerLeft,
+        // ✅ 也是左边距 16，绝对对齐
+        padding: const EdgeInsets.only(left: 16), 
+        child: Text(
+          currentCategory.title, 
+          style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)
+        ),
+      );
+    }
   }
 }

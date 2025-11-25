@@ -1,120 +1,98 @@
 import 'package:flutter/material.dart';
 
-// =========================================================
-// 1. 统一枚举定义 (App 全局通用)
-// =========================================================
+// 1. 统一枚举
+enum EditorMode { none, filter, frame, sticker, grain, edit }
 
-enum EditorMode {
-  none,    // 正常模式 (显示快门/主菜单)
-  filter,  // 滤镜
-  frame,   // 边框
-  sticker, // 贴纸
-  grain,   // 颗粒
-  edit,    // 基础编辑 (裁剪/旋转/亮度等)
-}
-
-// =========================================================
 // 2. 数据模型
-// =========================================================
-
 class EditorItem {
   final String id;
   final String name;
-  final Color? color;    // Camera 用的颜色占位
-  final String iconPath; // Gallery 用的图标路径
+  final Color? color;    
+  final String iconPath; 
 
-  const EditorItem({
-    required this.id,
-    required this.name,
-    this.color,
-    this.iconPath = '',
-  });
+  const EditorItem({required this.id, required this.name, this.color, this.iconPath = ''});
 }
 
 class EditorCategory {
   final String title;
   final List<EditorItem> items;
-
-  const EditorCategory({
-    required this.title,
-    required this.items,
-  });
+  const EditorCategory({required this.title, required this.items});
 }
 
-// =========================================================
 // 3. 统一 Mock 数据源
-// =========================================================
-
 class EditorMockData {
   
   // 🌈 滤镜
   static const List<EditorCategory> filterCategories = [
-    EditorCategory(
-      title: "胶片",
-      items: [
-        EditorItem(id: "none", name: "原图", color: Colors.transparent),
-        EditorItem(id: "f_c200", name: "C200", color: Colors.orangeAccent),
-        EditorItem(id: "f_vista", name: "Vista", color: Colors.blueAccent),
-        EditorItem(id: "f_kd400", name: "KD400", color: Colors.redAccent),
-      ],
-    ),
-    EditorCategory(
-      title: "黑白",
-      items: [
-        EditorItem(id: "b_bw1", name: "BW1", color: Colors.grey),
-        EditorItem(id: "b_bw2", name: "BW2", color: Colors.blueGrey),
-      ],
-    ),
+    EditorCategory(title: "胶片", items: [
+      EditorItem(id: "none", name: "无", color: Colors.transparent),
+      EditorItem(id: "f_c200", name: "C200", color: Colors.orangeAccent),
+      EditorItem(id: "f_vista", name: "Vista", color: Colors.blueAccent),
+    ]),
+    EditorCategory(title: "电影", items: [
+      // ✅ 补充 "无"
+      EditorItem(id: "none", name: "无", color: Colors.transparent),
+      EditorItem(id: "m_cin1", name: "Cin1", color: Colors.purpleAccent),
+      EditorItem(id: "m_cin2", name: "Cin2", color: Colors.tealAccent),
+    ]),
+    EditorCategory(title: "黑白", items: [
+      // ✅ 补充 "无"
+      EditorItem(id: "none", name: "无", color: Colors.transparent),
+      EditorItem(id: "b_bw1", name: "BW1", color: Colors.grey),
+    ]),
   ];
 
   // 🖼️ 边框
   static const List<EditorCategory> frameCategories = [
-    EditorCategory(
-      title: "拍立得",
-      items: [
-        EditorItem(id: "none", name: "无", color: Colors.transparent),
-        EditorItem(id: "fr_white", name: "白框", color: Colors.white),
-        EditorItem(id: "fr_black", name: "黑框", color: Colors.black87),
-        EditorItem(id: "fr_check", name: "棋盘", color: Colors.grey),
-      ],
-    ),
+    EditorCategory(title: "拍立得", items: [
+      EditorItem(id: "none", name: "无", color: Colors.transparent),
+      EditorItem(id: "fr_white", name: "白框", color: Colors.white),
+      EditorItem(id: "fr_black", name: "黑框", color: Colors.black87),
+    ]),
+    EditorCategory(title: "极简", items: [
+      // ✅ 补充 "无"
+      EditorItem(id: "none", name: "无", color: Colors.transparent),
+      EditorItem(id: "fr_simple_1", name: "细线", color: Colors.white30),
+      EditorItem(id: "fr_simple_2", name: "圆角", color: Colors.white12),
+    ]),
   ];
 
-  // ✨ 颗粒 (Camera / Gallery 通用)
+  // ✨ 颗粒
   static const List<EditorCategory> grainCategories = [
-    EditorCategory(
-      title: "胶片质感",
-      items: [
-        EditorItem(id: "none", name: "无"),
-        EditorItem(id: "g_low", name: "细沙"),
-        EditorItem(id: "g_med", name: "胶片"),
-        EditorItem(id: "g_high", name: "粗砺"),
-        EditorItem(id: "g_bw", name: "黑白噪点"),
-      ],
-    ),
+    EditorCategory(title: "质感", items: [
+      EditorItem(id: "none", name: "无"),
+      EditorItem(id: "g_low", name: "细沙"),
+      EditorItem(id: "g_med", name: "胶片"),
+    ]),
+    EditorCategory(title: "光效", items: [
+      // ✅ 补充 "无"
+      EditorItem(id: "none", name: "无"),
+      EditorItem(id: "g_dust", name: "灰尘"),
+      EditorItem(id: "g_scratch", name: "划痕"),
+    ]),
   ];
 
-  // 🛠️ 基础编辑 (Gallery 用) - ✅ 已更新为你要求的三个功能
-  static const List<EditorCategory> editCategories = [
-    EditorCategory(
-      title: "调整",
-      items: [
-        EditorItem(id: "brightness", name: "亮度"),
-        EditorItem(id: "mirror", name: "左右翻转"),
-        EditorItem(id: "vignette", name: "暗角"),
-      ],
-    ),
-  ];
-  
   // 🐻 贴纸
   static const List<EditorCategory> stickerCategories = [
-    EditorCategory(
-      title: "Emoji",
-      items: [
-        EditorItem(id: "s_smile", name: "😄"),
-        EditorItem(id: "s_heart", name: "❤️"),
-        EditorItem(id: "s_fire", name: "🔥"),
-      ],
-    ),
+    EditorCategory(title: "Emoji", items: [
+      EditorItem(id: "none", name: "无"),
+      EditorItem(id: "s_smile", name: "😄"),
+      EditorItem(id: "s_heart", name: "❤️"),
+    ]),
+    EditorCategory(title: "文字", items: [
+      // ✅ 补充 "无"
+      EditorItem(id: "none", name: "无"),
+      EditorItem(id: "t_date", name: "日期"),
+      EditorItem(id: "t_sign", name: "签名"),
+    ]),
+  ];
+
+  // 🛠️ 基础编辑
+  static const List<EditorCategory> editCategories = [
+    EditorCategory(title: "调整", items: [
+      EditorItem(id: "brightness", name: "亮度"),
+      EditorItem(id: "mirror", name: "左右翻转"),
+      EditorItem(id: "vignette", name: "暗角"),
+    ]),
   ];
 }
