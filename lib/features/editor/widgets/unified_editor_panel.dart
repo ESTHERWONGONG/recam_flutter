@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
-// ✅ 必须引入统一的常量定义
 import '../editor_constants.dart';
 
 class UnifiedEditorPanel extends StatefulWidget {
-  final List<EditorCategory> categories; // 数据源
-  final VoidCallback onClose;            // 关闭回调
+  final List<EditorCategory> categories;
+  final VoidCallback onClose;
+  final Function(EditorItem item)? onItemTap;
 
   const UnifiedEditorPanel({
     super.key,
     required this.categories,
     required this.onClose,
+    this.onItemTap,
   });
 
   @override
@@ -18,7 +19,7 @@ class UnifiedEditorPanel extends StatefulWidget {
 
 class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTickerProviderStateMixin {
   int _selectedCategoryIndex = 0; 
-  int _selectedItemIndex = 0;     
+  int _selectedItemIndex = -1; 
   late TabController _tabController;
 
   @override
@@ -35,12 +36,11 @@ class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTick
   @override
   void didUpdateWidget(UnifiedEditorPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 如果外部传入的分类变了（比如从滤镜切到边框），重置 TabController
     if (widget.categories.length != oldWidget.categories.length) {
       _tabController.dispose();
       _tabController = TabController(length: widget.categories.length, vsync: this);
       _selectedCategoryIndex = 0;
-      _selectedItemIndex = 0;
+      _selectedItemIndex = -1;
     }
   }
 
@@ -52,18 +52,21 @@ class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTick
 
   @override
   Widget build(BuildContext context) {
-    // 安全检查：防止空数据崩溃
     if (widget.categories.isEmpty) return const SizedBox();
-
     final currentCategory = widget.categories[_selectedCategoryIndex];
 
     return Container(
-      color: const Color(0xFF111111),
+      decoration: const BoxDecoration(
+        color: Color(0xFF111111),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      // ✅ [核心修改] 删除了这里的 padding: bottomPadding
+      // 因为父页面已经套了 SafeArea，这里不需要再加，否则会有双下巴
       child: Column(
-        mainAxisSize: MainAxisSize.min, // 高度自适应
+        mainAxisSize: MainAxisSize.min, 
         children: [
-          // 1. 分类层 (Tabs)
-          if (widget.categories.length > 1) // 只有多于1个分类时才显示Tab
+          // 1. 顶部 TabBar
+          if (widget.categories.length > 1) 
             Container(
               height: 40,
               margin: const EdgeInsets.only(top: 10),
@@ -76,57 +79,56 @@ class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTick
                 indicatorColor: Colors.yellowAccent,
                 indicatorSize: TabBarIndicatorSize.label,
                 dividerColor: Colors.transparent,
-                // ✅ [修复点 1] 这里改成了 c.title (之前是 c.name)
                 tabs: widget.categories.map((c) => Tab(text: c.title)).toList(),
                 onTap: (index) => setState(() => _selectedCategoryIndex = index),
               ),
             )
           else 
-            // 如果只有一个分类，显示简单的标题或者留空
             Container(
               alignment: Alignment.centerLeft,
               padding: const EdgeInsets.only(left: 20, top: 15, bottom: 5),
               child: Text(currentCategory.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
 
-          // 2. 资源选择层 (List)
+          // 2. 资源列表
           SizedBox(
-            height: 100, 
+            height: 120, 
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               itemCount: currentCategory.items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              separatorBuilder: (_, __) => const SizedBox(width: 16),
               itemBuilder: (context, index) {
                 final item = currentCategory.items[index];
                 final isSelected = _selectedItemIndex == index;
 
                 return GestureDetector(
-                  onTap: () => setState(() => _selectedItemIndex = index),
+                  onTap: () {
+                    setState(() => _selectedItemIndex = index);
+                    if (widget.onItemTap != null) widget.onItemTap!(item);
+                  },
                   child: Column(
                     children: [
                       Container(
-                        width: 48, height: 48,
+                        width: 64, height: 64,
                         decoration: BoxDecoration(
-                          // ✅ [修复点 2] 兼容颜色和图片逻辑
-                          color: item.color ?? Colors.white10, 
-                          borderRadius: BorderRadius.circular(8),
+                          color: item.color ?? const Color(0xFF222222), 
+                          borderRadius: BorderRadius.circular(12),
                           border: isSelected 
-                              ? Border.all(color: Colors.yellowAccent, width: 2.5) 
-                              : Border.all(color: Colors.transparent, width: 2.5),
+                              ? Border.all(color: Colors.yellowAccent, width: 2) 
+                              : null,
                         ),
                         alignment: Alignment.center,
-                        // 如果没有颜色且没有图标，显示首字作为占位
                         child: (item.color == null && item.iconPath.isEmpty)
-                            ? Text(item.name.isNotEmpty ? item.name[0] : "", style: const TextStyle(color: Colors.white54))
+                            ? Text(item.name.isNotEmpty ? item.name[0] : "", style: const TextStyle(color: Colors.white30, fontSize: 20))
                             : null,
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 8),
                       Text(item.name, 
                         style: TextStyle(
                           color: isSelected ? Colors.white : Colors.grey, 
-                          fontSize: 10,
-                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal
+                          fontSize: 11,
+                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal
                         )
                       ),
                     ],
@@ -136,27 +138,22 @@ class _UnifiedEditorPanelState extends State<UnifiedEditorPanel> with SingleTick
             ),
           ),
 
-          // 3. 底部控制层 (Action Bar)
+          // 3. 底部控制栏
           Container(
-            height: 50,
+            height: 40,
             padding: const EdgeInsets.symmetric(horizontal: 20),
             decoration: const BoxDecoration(
-              border: Border(top: BorderSide(color: Colors.white10)),
+              border: Border(top: BorderSide(color: Colors.white10, width: 0.5)),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // 左侧预留：清除效果
                 IconButton(
-                  icon: const Icon(Icons.block, color: Colors.grey, size: 22),
-                  onPressed: () { 
-                     // TODO: 重置逻辑
-                     setState(() => _selectedItemIndex = 0);
-                  }, 
+                  icon: const Icon(Icons.block, color: Colors.white38, size: 20),
+                  onPressed: () => setState(() => _selectedItemIndex = -1), 
                 ),
-                // 右侧：收起面板
                 IconButton(
-                  icon: const Icon(Icons.keyboard_arrow_down, color: Colors.white, size: 30),
+                  icon: const Icon(Icons.keyboard_arrow_down, color: Colors.white70, size: 28),
                   onPressed: widget.onClose, 
                 ),
               ],

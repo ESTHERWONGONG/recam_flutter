@@ -9,8 +9,8 @@ enum EditorMode {
   filter,  // 滤镜
   frame,   // 边框
   sticker, // 贴纸
-  grain,   // ✨ 颗粒 (本次新增，Camera 和 Gallery 都支持)
-  edit,    // 基础编辑 (裁剪/旋转，通常只在 Gallery 用，但定义在这里无妨)
+  grain,   // 颗粒
+  edit,    // 基础编辑 (裁剪/旋转/亮度等)
 }
 
 // =========================================================
@@ -94,14 +94,14 @@ class EditorMockData {
     ),
   ];
 
-  // 🛠️ 基础编辑 (仅 Gallery)
+  // 🛠️ 基础编辑 (Gallery 用) - ✅ 已更新为你要求的三个功能
   static const List<EditorCategory> editCategories = [
     EditorCategory(
       title: "调整",
       items: [
-        EditorItem(id: "crop", name: "裁剪"),
-        EditorItem(id: "rotate", name: "旋转"),
         EditorItem(id: "brightness", name: "亮度"),
+        EditorItem(id: "mirror", name: "左右翻转"),
+        EditorItem(id: "vignette", name: "暗角"),
       ],
     ),
   ];
