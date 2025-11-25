@@ -36,14 +36,17 @@ target 'Runner' do
   end
 end
 
-# 👇👇👇 重点修改了这里 👇👇👇
+# 👇👇👇 核心修改都在这里 👇👇👇
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
-
-    # ✅ [新增] 开启权限宏定义
-    # 必须加这几行，permission_handler 才会去请求 iOS 权限
+    
     target.build_configurations.each do |config|
+      # ✅ 1. 强制修复版本报错 (IPHONEOS_DEPLOYMENT_TARGET)
+      # 这行代码能解决 "set to 9.0" 的报错
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+      
+      # ✅ 2. 权限宏定义 (保留你原来的逻辑)
       config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
         '$(inherited)',
         
@@ -57,6 +60,5 @@ post_install do |installer|
         'PERMISSION_PHOTOS=1',
       ]
     end
-    
   end
 end
