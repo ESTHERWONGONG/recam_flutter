@@ -27,10 +27,17 @@ class _GalleryScreenState extends State<GalleryScreen> {
 
   final ScreenshotController _screenshotController = ScreenshotController();
 
+  // ✅ [新增] 完整的编辑状态 (不再只有亮度)
   String? _activeEditToolId; 
   double _brightnessValue = 0.0;
   double _vignetteValue = 0.0;
   bool _isMirrored = false;
+  
+  // ✅ [新增] 记录选中的素材 ID
+  String _selectedFilterId = 'none';
+  String _selectedFrameId = 'none';
+  String _selectedStickerId = 'none';
+  String _selectedGrainId = 'none';
 
   @override
   void didChangeDependencies() {
@@ -71,31 +78,33 @@ class _GalleryScreenState extends State<GalleryScreen> {
     });
   }
 
+  // ✅ 重置所有状态
   void _resetEditorState() {
     _editorMode = EditorMode.none;
     _activeEditToolId = null;
     _brightnessValue = 0.0;
     _vignetteValue = 0.0;
     _isMirrored = false;
+    _selectedFilterId = 'none';
+    _selectedFrameId = 'none';
+    _selectedStickerId = 'none';
+    _selectedGrainId = 'none';
   }
 
-  // ✅ [核心] 保存编辑后的图片到系统相册
   Future<void> _saveEditedPhoto() async {
     if (_currentIndex == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('正在保存...'), duration: Duration(seconds: 1)));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('正在生成大片...'), duration: Duration(seconds: 1)));
 
     try {
-      // 1. 截图当前组件状态
+      // 截图当前的渲染结果 (所见即所得)
       final Uint8List? imageBytes = await _screenshotController.capture(pixelRatio: 3.0);
 
       if (imageBytes != null) {
-        // 2. 写入临时文件
         final directory = await getTemporaryDirectory();
         final fileName = 'recam_edit_${DateTime.now().millisecondsSinceEpoch}.jpg';
         final File tempFile = File('${directory.path}/$fileName');
         await tempFile.writeAsBytes(imageBytes);
 
-        // 3. 存入系统相册
         final success = await NativeCameraService().saveToGallery(tempFile.path);
 
         if (mounted) {
@@ -179,14 +188,22 @@ class _GalleryScreenState extends State<GalleryScreen> {
                 physics: _editorMode == EditorMode.none ? const BouncingScrollPhysics() : const NeverScrollableScrollPhysics(),
                 onPageChanged: (index) => setState(() => _currentIndex = index),
                 itemBuilder: (context, index) {
-                  // ✅ 传入 Controller
+                  // ✅ 传入所有选中的 ID
                   return _ZoomablePhoto(
                     file: File(_photos[index].path),
                     screenshotController: index == _currentIndex ? _screenshotController : null,
                     enableZoom: _editorMode == EditorMode.none,
+                    
+                    // 编辑参数
                     brightness: _brightnessValue,
                     vignette: _vignetteValue,
                     isMirrored: _isMirrored,
+                    
+                    // 素材 ID
+                    filterId: _selectedFilterId,
+                    frameId: _selectedFrameId,
+                    stickerId: _selectedStickerId,
+                    grainId: _selectedGrainId,
                   );
                 },
               ),
@@ -218,7 +235,7 @@ class _GalleryScreenState extends State<GalleryScreen> {
       child: SafeArea(
         top: false,
         child: Container(
-          height: 200, alignment: Alignment.center,
+          height: 200, alignment: Alignment.center, 
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             crossAxisAlignment: CrossAxisAlignment.center,
@@ -237,7 +254,14 @@ class _GalleryScreenState extends State<GalleryScreen> {
 
   Widget _buildSpecificPanel() {
     List<EditorCategory> categories = []; Key panelKey = const ValueKey('EmptyPanel');
-    switch (_editorMode) { case EditorMode.filter: categories = EditorMockData.filterCategories; panelKey = const ValueKey('FilterPanel'); break; case EditorMode.frame: categories = EditorMockData.frameCategories; panelKey = const ValueKey('FramePanel'); break; case EditorMode.sticker: categories = EditorMockData.stickerCategories; panelKey = const ValueKey('StickerPanel'); break; case EditorMode.grain: categories = EditorMockData.grainCategories; panelKey = const ValueKey('GrainPanel'); break; case EditorMode.edit: categories = EditorMockData.editCategories; panelKey = const ValueKey('EditPanel'); break; default: return const SizedBox(); }
+    switch (_editorMode) { 
+      case EditorMode.filter: categories = EditorMockData.filterCategories; panelKey = const ValueKey('FilterPanel'); break; 
+      case EditorMode.frame: categories = EditorMockData.frameCategories; panelKey = const ValueKey('FramePanel'); break; 
+      case EditorMode.sticker: categories = EditorMockData.stickerCategories; panelKey = const ValueKey('StickerPanel'); break; 
+      case EditorMode.grain: categories = EditorMockData.grainCategories; panelKey = const ValueKey('GrainPanel'); break; 
+      case EditorMode.edit: categories = EditorMockData.editCategories; panelKey = const ValueKey('EditPanel'); break; 
+      default: return const SizedBox(); 
+    }
     return Container(
       key: panelKey, color: const Color(0xFF111111),
       child: SafeArea(
@@ -245,7 +269,22 @@ class _GalleryScreenState extends State<GalleryScreen> {
         child: UnifiedEditorPanel(
           categories: categories,
           onClose: () => setState(() { _editorMode = EditorMode.none; _activeEditToolId = null; }),
-          onItemTap: (item) { setState(() { _activeEditToolId = item.id; if (item.id == 'mirror') _isMirrored = !_isMirrored; }); },
+          
+          // ✅ [更新] 更新选中状态
+          onItemTap: (item) {
+            setState(() {
+              if (_editorMode == EditorMode.filter) _selectedFilterId = item.id;
+              if (_editorMode == EditorMode.frame) _selectedFrameId = item.id;
+              if (_editorMode == EditorMode.sticker) _selectedStickerId = item.id;
+              if (_editorMode == EditorMode.grain) _selectedGrainId = item.id;
+              
+              // 编辑模式特殊处理
+              if (_editorMode == EditorMode.edit) {
+                _activeEditToolId = item.id;
+                if (item.id == 'mirror') _isMirrored = !_isMirrored;
+              }
+            });
+          },
         ),
       ),
     );
@@ -276,37 +315,138 @@ class _GalleryScreenState extends State<GalleryScreen> {
   }
 }
 
+// -----------------------------------------------------------
+// ✅ 升级版图片组件：支持素材叠加
+// -----------------------------------------------------------
 class _ZoomablePhoto extends StatefulWidget {
   final File file;
   final bool enableZoom;
   final ScreenshotController? screenshotController; 
+  
+  // 编辑数值
   final double brightness;
   final double vignette;
   final bool isMirrored;
-  const _ZoomablePhoto({required this.file, required this.enableZoom, this.screenshotController, this.brightness = 0.0, this.vignette = 0.0, this.isMirrored = false});
+  
+  // 素材 ID
+  final String filterId;
+  final String frameId;
+  final String stickerId;
+  final String grainId;
+
+  const _ZoomablePhoto({
+    required this.file, 
+    required this.enableZoom,
+    this.screenshotController, 
+    this.brightness = 0.0,
+    this.vignette = 0.0,
+    this.isMirrored = false,
+    this.filterId = 'none',
+    this.frameId = 'none',
+    this.stickerId = 'none',
+    this.grainId = 'none',
+  });
+
   @override
   State<_ZoomablePhoto> createState() => _ZoomablePhotoState();
 }
+
 class _ZoomablePhotoState extends State<_ZoomablePhoto> with SingleTickerProviderStateMixin {
   final TransformationController _transformationController = TransformationController();
   TapDownDetails? _doubleTapDetails;
   late AnimationController _animationController;
   Animation<Matrix4>? _animation;
+
   @override
   void initState() { super.initState(); _animationController = AnimationController(vsync: this, duration: const Duration(milliseconds: 200))..addListener(() { _transformationController.value = _animation!.value; }); }
   @override
   void dispose() { _transformationController.dispose(); _animationController.dispose(); super.dispose(); }
   void _handleDoubleTap() { if (!widget.enableZoom) return; Matrix4 endMatrix; Offset position = _doubleTapDetails != null ? _doubleTapDetails!.localPosition : Offset.zero; if (_transformationController.value != Matrix4.identity()) { endMatrix = Matrix4.identity(); } else { endMatrix = Matrix4.identity()..translate(-position.dx, -position.dy)..scale(2.0)..translate(position.dx / 2, position.dy / 2); } _animation = Matrix4Tween(begin: _transformationController.value, end: endMatrix).animate(CurveTween(curve: Curves.easeInOut).animate(_animationController)); _animationController.forward(from: 0); }
+  
   @override
   Widget build(BuildContext context) {
     return GestureDetector(onDoubleTapDown: (d) => _doubleTapDetails = d, onDoubleTap: _handleDoubleTap, child: Center(child: InteractiveViewer(transformationController: _transformationController, minScale: 1.0, maxScale: 3.0, scaleEnabled: widget.enableZoom, child: _buildContentWithScreenshot())));
   }
+
   Widget _buildContentWithScreenshot() {
     final content = _buildEditedImage();
     if (widget.screenshotController != null) { return Screenshot(controller: widget.screenshotController!, child: content); }
     return content;
   }
+
+  // ✅ [Helper] 查找资源路径
+  String? _getAssetPath(List<EditorCategory> categories, String id) {
+    if (id == 'none') return null;
+    for (var cat in categories) {
+      for (var item in cat.items) {
+        if (item.id == id) return item.assetPath;
+      }
+    }
+    return null;
+  }
+
   Widget _buildEditedImage() {
-    return Transform(alignment: Alignment.center, transform: widget.isMirrored ? Matrix4.rotationY(math.pi) : Matrix4.identity(), child: Stack(fit: StackFit.expand, children: [ ColorFiltered(colorFilter: ColorFilter.matrix([1, 0, 0, 0, widget.brightness * 255, 0, 1, 0, 0, widget.brightness * 255, 0, 0, 1, 0, widget.brightness * 255, 0, 0, 0, 1, 0]), child: Image.file(widget.file, fit: BoxFit.contain)), if (widget.vignette > 0) IgnorePointer(child: Container(decoration: BoxDecoration(gradient: RadialGradient(colors: [Colors.transparent, Colors.black.withOpacity(widget.vignette)], radius: 1.5 - widget.vignette, center: Alignment.center, stops: const [0.4, 1.0])))) ]));
+    // 获取资源路径
+    final framePath = _getAssetPath(EditorMockData.frameCategories, widget.frameId);
+    final grainPath = _getAssetPath(EditorMockData.grainCategories, widget.grainId);
+    final stickerPath = _getAssetPath(EditorMockData.stickerCategories, widget.stickerId);
+
+    return Transform(
+      alignment: Alignment.center,
+      transform: widget.isMirrored ? Matrix4.rotationY(math.pi) : Matrix4.identity(),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 1. 底图 (亮度 + 滤镜颜色模拟)
+          ColorFiltered(
+            colorFilter: ColorFilter.matrix([
+              1, 0, 0, 0, widget.brightness * 255, 
+              0, 1, 0, 0, widget.brightness * 255, 
+              0, 0, 1, 0, widget.brightness * 255, 
+              0, 0, 0, 1, 0,
+            ]),
+            // 如果有滤镜ID，这里可以加更多逻辑，暂时先不动
+            child: Image.file(widget.file, fit: BoxFit.contain),
+          ),
+
+          // 2. 颗粒/光效 (叠加模式)
+          // ✅ 如果找到了路径，且文件存在，就渲染
+          if (grainPath != null && grainPath.isNotEmpty)
+            Image.asset(
+              grainPath,
+              fit: BoxFit.cover,
+              // 滤色模式 (去黑留白)，非常适合漏光素材
+              color: Colors.white.withOpacity(0.8), 
+              colorBlendMode: BlendMode.screen,
+              errorBuilder: (c,e,s) => const SizedBox(), // 没图时不崩
+            ),
+
+          // 3. 暗角
+          if (widget.vignette > 0)
+            IgnorePointer(child: Container(decoration: BoxDecoration(gradient: RadialGradient(colors: [Colors.transparent, Colors.black.withOpacity(widget.vignette)], radius: 1.5 - widget.vignette, center: Alignment.center, stops: const [0.4, 1.0])))),
+
+          // 4. 边框 (Frame)
+          // ✅ 覆盖在最上层
+          if (framePath != null && framePath.isNotEmpty)
+            Image.asset(
+              framePath,
+              fit: BoxFit.fill, // 边框通常需要拉伸填满
+              errorBuilder: (c,e,s) => Container(decoration: BoxDecoration(border: Border.all(color: Colors.white, width: 10))), // 没图时显示白框兜底
+            ),
+
+          // 5. 贴纸 (Sticker)
+          // ✅ 居中显示 (未来做成可拖拽)
+          if (stickerPath != null && stickerPath.isNotEmpty)
+            Center(
+              child: Image.asset(
+                stickerPath,
+                width: 150, // 默认大小
+                fit: BoxFit.contain,
+                errorBuilder: (c,e,s) => const Icon(Icons.emoji_emotions, size: 100, color: Colors.white),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }

@@ -1,10 +1,10 @@
 import 'dart:async'; 
 import 'dart:io';
-import 'dart:typed_data'; // 用于处理图片二进制数据
+import 'dart:typed_data'; 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart'; // 获取临时路径
-import 'package:screenshot/screenshot.dart';       // 截图库
+import 'package:path_provider/path_provider.dart'; 
+import 'package:screenshot/screenshot.dart';       
 import 'package:shared_preferences/shared_preferences.dart'; 
 import '../../services/native_camera_service.dart'; 
 import '../../models/ai_recommendation.dart'; 
@@ -23,15 +23,12 @@ class CameraScreen extends StatefulWidget {
 class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMixin {
   String _flashMode = "off";
   final NativeCameraService _cameraService = NativeCameraService();
-  
-  // ✅ [新增] 截图控制器，用于后台合成效果
   final ScreenshotController _screenshotController = ScreenshotController();
 
   bool _isShooting = false;
   String _currentRatio = "4:3"; 
   EditorMode _editorMode = EditorMode.none; 
   
-  // ✅ [新增] 状态记录：记住用户在拍照前选了什么
   String _selectedFilterId = "none";
   String _selectedFrameId = "none";
   String _selectedStickerId = "none";
@@ -85,36 +82,53 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     await _galleryAnimController.reverse();
   }
 
+  // ✅ 辅助方法：获取资源路径
+  String? _getAssetPath(List<EditorCategory> categories, String id) {
+    if (id == 'none') return null;
+    for (var cat in categories) {
+      for (var item in cat.items) {
+        if (item.id == id) return item.assetPath;
+      }
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final viewfinderHeight = screenWidth * (4 / 3);
     final double maskHeight = _currentRatio == "1:1" ? (viewfinderHeight - screenWidth) / 2 : 0.0;
 
+    // 获取当前选中的资源路径
+    final stickerPath = _getAssetPath(EditorMockData.stickerCategories, _selectedStickerId);
+    final framePath = _getAssetPath(EditorMockData.frameCategories, _selectedFrameId);
+    final grainPath = _getAssetPath(EditorMockData.grainCategories, _selectedGrainId);
+
     return Scaffold(
       backgroundColor: Colors.black,
-      // 防止键盘或面板顶起导致溢出
       resizeToAvoidBottomInset: false,
       body: SafeArea(
-        bottom: false, // 底部区域由 Stack 内部组件自己处理
+        bottom: false,
         child: Stack(
           children: [
-            // 1. 主内容 (相机流 + 遮罩 + 顶部栏)
+            // 1. 主内容
             Column(
               children: [
-                _buildTopBar(),
+                _buildTopBar(), // ✅ 这里调用了 _buildTopBar
                 SizedBox(
                   width: screenWidth,
                   height: viewfinderHeight,
                   child: Stack(
                     children: [
+                      // 相机预览
                       const UiKitView(
                         viewType: 'recam_native_camera_view',
                         layoutDirection: TextDirection.ltr,
                         creationParams: {},
                         creationParamsCodec: StandardMessageCodec(),
                       ),
-                      // 遮罩层 (处理 1:1 比例的黑边)
+                      
+                      // 遮罩
                       Column(
                         children: [
                           AnimatedContainer(duration: const Duration(milliseconds: 300), height: maskHeight, width: double.infinity, color: Colors.black),
@@ -123,11 +137,38 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                         ],
                       ),
                       
-                      // ✅ 实时预览层占位 (这里简单模拟，实际需接 Shader)
+                      // --- 实时预览层 ---
+                      // 3.1 滤镜 (模拟)
                       if (_selectedFilterId == 'f_c200')
-                         IgnorePointer(child: Container(color: Colors.orange.withOpacity(0.05))), // 模拟一点暖色
-                      if (_selectedGrainId != 'none') 
-                        IgnorePointer(child: Container(color: Colors.white.withOpacity(0.05))), // 模拟微弱颗粒
+                         IgnorePointer(child: Container(color: Colors.orange.withOpacity(0.05))),
+
+                      // 3.2 颗粒/光效
+                      if (grainPath != null && grainPath.isNotEmpty)
+                        IgnorePointer(
+                          child: Image.asset(
+                            grainPath, 
+                            fit: BoxFit.cover, 
+                            width: double.infinity,
+                            height: double.infinity,
+                            color: Colors.white.withOpacity(0.5),
+                            colorBlendMode: BlendMode.screen,
+                            errorBuilder: (c,e,s) => const SizedBox(),
+                          )
+                        ),
+
+                      // 3.3 边框
+                      if (framePath != null && framePath.isNotEmpty)
+                        IgnorePointer(
+                          child: Image.asset(framePath, fit: BoxFit.fill, width: double.infinity, height: double.infinity, errorBuilder: (c,e,s) => const SizedBox())
+                        ),
+
+                      // 3.4 贴纸 (居中)
+                      if (stickerPath != null && stickerPath.isNotEmpty)
+                        IgnorePointer(
+                          child: Center(
+                            child: Image.asset(stickerPath, width: 150, fit: BoxFit.contain, errorBuilder: (c,e,s) => const SizedBox()),
+                          ),
+                        ),
 
                       // AI 气泡
                       Positioned(
@@ -138,26 +179,25 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                         ),
                       ),
                       
-                      // 滑杆 (仅在滤镜模式显示)
+                      // 滑杆
                       if (_editorMode == EditorMode.filter)
                         AnimatedPositioned(duration: const Duration(milliseconds: 300), bottom: 10 + maskHeight, left: 20, right: 20, child: _buildIndependentSlider()),
                       
-                      // 倒计时数字
+                      // 倒计时
                       if (_isCountingDown)
                         Center(child: Text("$_currentCount", style: const TextStyle(color: Colors.white, fontSize: 100, fontWeight: FontWeight.bold, shadows: [Shadow(blurRadius: 10, color: Colors.black)]))),
                     ],
                   ),
                 ),
-                const Spacer(), // 占位，把下面留给底部面板
+                const Spacer(),
               ],
             ),
 
-            // 2. 底部交互区 (固定在最底部)
+            // 2. 底部交互区
             Positioned(
               left: 0, right: 0, bottom: 0,
               child: Container(
                 color: const Color(0xFF111111),
-                // 让子组件决定高度，配合 SafeArea 使用
                 child: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 300),
                   transitionBuilder: (Widget child, Animation<double> animation) {
@@ -166,7 +206,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                       child: child,
                     );
                   },
-                  child: _buildBottomPanelContent(),
+                  child: _buildBottomPanelContent(), // ✅ 这里调用了 _buildBottomPanelContent
                 ),
               ),
             ),
@@ -176,7 +216,9 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     );
   }
 
-  // --- Components ---
+  // ==========================================
+  // 👇👇👇 下面这些就是之前被省略的方法，现在补全了 👇👇👇
+  // ==========================================
 
   Widget _buildTopBar() {
     if (_editorMode != EditorMode.none) return const SizedBox(height: 50);
@@ -202,7 +244,6 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   }
 
   Widget _buildBottomPanelContent() {
-    // 如果处于编辑模式，显示二级面板
     if (_editorMode != EditorMode.none) {
       List<EditorCategory> categories = [];
       Key key = const ValueKey('Empty');
@@ -220,7 +261,6 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
           key: key,
           categories: categories,
           onClose: () => setState(() => _editorMode = EditorMode.none),
-          // ✅ 记录用户选择，用于拍照时合成
           onItemTap: (item) {
             setState(() {
               if (_editorMode == EditorMode.filter) _selectedFilterId = item.id;
@@ -228,12 +268,11 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
               if (_editorMode == EditorMode.sticker) _selectedStickerId = item.id;
               if (_editorMode == EditorMode.grain) _selectedGrainId = item.id;
             });
-            print("📸 选中效果: ${item.name} (ID: ${item.id})");
+            print("📸 选中: ${item.name}");
           },
         ),
       );
     }
-    // 默认显示一级拍照面板
     return _buildCapturePanel();
   }
 
@@ -307,35 +346,34 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       if (rawPath.isEmpty) { _showErrorDialog("错误", "拍照失败"); return; }
 
       String finalPath = rawPath;
+      
+      final stickerPath = _getAssetPath(EditorMockData.stickerCategories, _selectedStickerId);
+      final framePath = _getAssetPath(EditorMockData.frameCategories, _selectedFrameId);
+      final grainPath = _getAssetPath(EditorMockData.grainCategories, _selectedGrainId);
 
-      // 检查是否需要合成特效
-      bool hasEffects = _selectedFilterId != 'none' || _selectedFrameId != 'none' || 
-                        _selectedStickerId != 'none' || _selectedGrainId != 'none';
+      bool hasEffects = _selectedFilterId != 'none' || framePath != null || stickerPath != null || grainPath != null;
 
       if (hasEffects) {
         print("✨ 2. 检测到特效，开始后台合成...");
         
-        // 构建不可见的特效层 (逻辑与 Gallery 一致)
         final effectWidget = Stack(
           fit: StackFit.expand,
           children: [
             Image.file(File(rawPath), fit: BoxFit.cover),
             
-            // 模拟滤镜 (用 Container 颜色模拟，修复了 blendMode 报错)
-            if (_selectedFilterId == 'f_c200') 
-              Container(color: Colors.orange.withOpacity(0.1)), 
+            if (_selectedFilterId == 'f_c200') Container(color: Colors.orange.withOpacity(0.1)),
             
-            // 模拟颗粒
-            if (_selectedGrainId != 'none') 
-              Container(color: Colors.white.withOpacity(0.05)),
-              
-            // 模拟边框
-            if (_selectedFrameId != 'none') 
-              Container(decoration: BoxDecoration(border: Border.all(color: Colors.white, width: 20))),
+            if (grainPath != null) 
+               Image.asset(grainPath, fit: BoxFit.cover, color: Colors.white.withOpacity(0.5), colorBlendMode: BlendMode.screen),
+            
+            if (framePath != null) 
+               Image.asset(framePath, fit: BoxFit.fill),
+               
+            if (stickerPath != null) 
+               Center(child: Image.asset(stickerPath, width: 150, fit: BoxFit.contain)),
           ],
         );
 
-        // 使用 screenshot 库生成新图
         final Uint8List imageBytes = await _screenshotController.captureFromWidget(
           Container(
             width: 1080, 
@@ -346,7 +384,6 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
           delay: const Duration(milliseconds: 50),
         );
 
-        // 写入临时文件
         final directory = await getTemporaryDirectory();
         final fileName = 'recam_baked_${DateTime.now().millisecondsSinceEpoch}.jpg';
         final File processedFile = File('${directory.path}/$fileName');
@@ -356,11 +393,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
         print("✅ 合成完成: $finalPath");
       }
 
-      // 保存流程
-      // 1. 存入 App 内部相册
       await PhotoStorage.savePhoto(finalPath);
-
-      // 2. 根据设置，存入系统相册
       final prefs = await SharedPreferences.getInstance();
       if (prefs.getBool('auto_save_to_gallery') ?? true) {
         await _cameraService.saveToGallery(finalPath);

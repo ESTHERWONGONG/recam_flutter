@@ -34,37 +34,54 @@ class PhotoStorage {
 
   /// 1. 存一张新照片（自动插到最前面）
   static Future<void> savePhoto(String path) async {
-    final prefs = await SharedPreferences.getInstance();
-    
-    // 获取旧数据
-    final List<String> history = prefs.getStringList(_key) ?? [];
-    
-    // 创建新记录
-    final newPhoto = ReCamPhoto(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      path: path,
-      createdAt: DateTime.now(),
-    );
+    if (path.isEmpty) {
+      print("❌ [PhotoStorage] 路径为空，取消保存");
+      return;
+    }
 
-    // 插队到第一位
-    history.insert(0, jsonEncode(newPhoto.toJson()));
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      // 获取旧数据
+      final List<String> history = prefs.getStringList(_key) ?? [];
+      
+      // 创建新记录
+      final newPhoto = ReCamPhoto(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        path: path,
+        createdAt: DateTime.now(),
+      );
 
-    // 保存
-    await prefs.setStringList(_key, history);
-    print("📒 数据持久化成功：${newPhoto.id}");
+      // ✅ 插队到第一位 (确保最新照片在最前面)
+      history.insert(0, jsonEncode(newPhoto.toJson()));
+
+      // 保存
+      await prefs.setStringList(_key, history);
+      print("✅ [PhotoStorage] 保存成功! ID: ${newPhoto.id}, 路径: $path");
+      print("📊 [PhotoStorage] 当前共有 ${history.length} 张照片");
+    } catch (e) {
+      print("❌ [PhotoStorage] 保存发生错误: $e");
+    }
   }
 
-  /// 2. 获取所有照片（分页/全部）
+  /// 2. 获取所有照片
   static Future<List<ReCamPhoto>> getAllPhotos() async {
-    final prefs = await SharedPreferences.getInstance();
-    final List<String> history = prefs.getStringList(_key) ?? [];
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final List<String> history = prefs.getStringList(_key) ?? [];
 
-    return history
-        .map((item) => ReCamPhoto.fromJson(jsonDecode(item)))
-        .toList();
+      final photos = history
+          .map((item) => ReCamPhoto.fromJson(jsonDecode(item)))
+          .toList();
+      
+      return photos;
+    } catch (e) {
+      print("❌ [PhotoStorage] 读取发生错误: $e");
+      return [];
+    }
   }
   
-  /// 3. 删除一张照片 (可选功能)
+  /// 3. 删除一张照片
   static Future<void> deletePhoto(String id) async {
     final prefs = await SharedPreferences.getInstance();
     List<String> history = prefs.getStringList(_key) ?? [];
@@ -75,5 +92,6 @@ class PhotoStorage {
     });
     
     await prefs.setStringList(_key, history);
+    print("🗑️ [PhotoStorage] 已删除照片 ID: $id");
   }
 }

@@ -1,25 +1,52 @@
 import 'package:flutter/material.dart';
 
-// 1. 统一枚举
-enum EditorMode { none, filter, frame, sticker, grain, edit }
+// =========================================================
+// 1. 统一枚举定义 (App 全局通用)
+// =========================================================
 
+enum EditorMode {
+  none,    // 正常模式 (显示快门/主菜单)
+  filter,  // 滤镜
+  frame,   // 边框
+  sticker, // 贴纸
+  grain,   // 颗粒
+  edit,    // 基础编辑 (裁剪/旋转/亮度等)
+}
+
+// =========================================================
 // 2. 数据模型
+// =========================================================
+
 class EditorItem {
   final String id;
   final String name;
-  final Color? color;    
-  final String iconPath; 
+  final Color? color;    // Camera 用的颜色占位
+  final String iconPath; // Gallery 用的图标路径
+  final String assetPath;// ✅ 真实素材路径
 
-  const EditorItem({required this.id, required this.name, this.color, this.iconPath = ''});
+  const EditorItem({
+    required this.id,
+    required this.name,
+    this.color,
+    this.iconPath = '',
+    this.assetPath = '', // 默认为空
+  });
 }
 
 class EditorCategory {
   final String title;
   final List<EditorItem> items;
-  const EditorCategory({required this.title, required this.items});
+
+  const EditorCategory({
+    required this.title,
+    required this.items,
+  });
 }
 
+// =========================================================
 // 3. 统一 Mock 数据源
+// =========================================================
+
 class EditorMockData {
   
   // 🌈 滤镜
@@ -30,13 +57,11 @@ class EditorMockData {
       EditorItem(id: "f_vista", name: "Vista", color: Colors.blueAccent),
     ]),
     EditorCategory(title: "电影", items: [
-      // ✅ 补充 "无"
       EditorItem(id: "none", name: "无", color: Colors.transparent),
       EditorItem(id: "m_cin1", name: "Cin1", color: Colors.purpleAccent),
       EditorItem(id: "m_cin2", name: "Cin2", color: Colors.tealAccent),
     ]),
     EditorCategory(title: "黑白", items: [
-      // ✅ 补充 "无"
       EditorItem(id: "none", name: "无", color: Colors.transparent),
       EditorItem(id: "b_bw1", name: "BW1", color: Colors.grey),
     ]),
@@ -50,14 +75,13 @@ class EditorMockData {
       EditorItem(id: "fr_black", name: "黑框", color: Colors.black87),
     ]),
     EditorCategory(title: "极简", items: [
-      // ✅ 补充 "无"
       EditorItem(id: "none", name: "无", color: Colors.transparent),
       EditorItem(id: "fr_simple_1", name: "细线", color: Colors.white30),
       EditorItem(id: "fr_simple_2", name: "圆角", color: Colors.white12),
     ]),
   ];
 
-  // ✨ 颗粒
+  // ✨ 颗粒/光效
   static const List<EditorCategory> grainCategories = [
     EditorCategory(title: "质感", items: [
       EditorItem(id: "none", name: "无"),
@@ -65,26 +89,36 @@ class EditorMockData {
       EditorItem(id: "g_med", name: "胶片"),
     ]),
     EditorCategory(title: "光效", items: [
-      // ✅ 补充 "无"
       EditorItem(id: "none", name: "无"),
       EditorItem(id: "g_dust", name: "灰尘"),
       EditorItem(id: "g_scratch", name: "划痕"),
     ]),
   ];
 
-  // 🐻 贴纸
+  // 🐻 贴纸 (已更新)
   static const List<EditorCategory> stickerCategories = [
-    EditorCategory(title: "Emoji", items: [
-      EditorItem(id: "none", name: "无"),
-      EditorItem(id: "s_smile", name: "😄"),
-      EditorItem(id: "s_heart", name: "❤️"),
-    ]),
-    EditorCategory(title: "文字", items: [
-      // ✅ 补充 "无"
-      EditorItem(id: "none", name: "无"),
-      EditorItem(id: "t_date", name: "日期"),
-      EditorItem(id: "t_sign", name: "签名"),
-    ]),
+    // ✅ Tab 1: 时间戳
+    EditorCategory(
+      title: "时间戳", 
+      items: [
+        EditorItem(id: "none", name: "无"),
+        // 👇 你的 001.png 在这里
+        EditorItem(
+          id: "s_classic_time", 
+          name: "经典时间", 
+          assetPath: "assets/stickers/001.png" // 确保文件已放入 assets/stickers/
+        ),
+      ]
+    ),
+    // Tab 2: Emoji (保留作参考)
+    EditorCategory(
+      title: "Emoji", 
+      items: [
+        EditorItem(id: "none", name: "无"),
+        EditorItem(id: "s_smile", name: "😄"),
+        EditorItem(id: "s_heart", name: "❤️"),
+      ]
+    ),
   ];
 
   // 🛠️ 基础编辑
