@@ -1,6 +1,6 @@
 name: recam_flutter
 description: ReCam - AI powered analog camera.
-publish_to: 'none' 
+publish_to: 'none'
 
 version: 1.0.0+1
 
@@ -33,7 +33,7 @@ dependencies:
   # --- 获取版本号 ---
   package_info_plus: ^5.0.1
 
-  # --- 备用相机库 ---
+  # --- 备用相机库 (部分底层依赖) ---
   camera: ^0.10.5
 
   # --- 截图库 (保存编辑效果) ---
@@ -41,6 +41,10 @@ dependencies:
 
   # --- 路径库 ---
   path_provider: ^2.1.1
+
+  # ✅ 手势矩阵库 (用于贴纸拖拽/缩放/旋转)
+  # 之前写成 ^0.2.0，pub 上没有这个正式版，会报错
+  matrix_gesture_detector: ^0.2.0-nullsafety.1
 
 dev_dependencies:
   flutter_test:
@@ -50,8 +54,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
-  # ✅✅✅ [关键修复] 必须在这里注册资源文件夹！✅✅✅
-  # 注意缩进：assets 前面有 2 个空格，横线 - 前面有 4 个空格
+  # ✅ 资源路径注册
   assets:
     - assets/frames/
     - assets/stickers/

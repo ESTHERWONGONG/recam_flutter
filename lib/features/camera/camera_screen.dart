@@ -114,7 +114,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
             // 1. 主内容
             Column(
               children: [
-                _buildTopBar(), // ✅ 这里调用了 _buildTopBar
+                _buildTopBar(),
                 SizedBox(
                   width: screenWidth,
                   height: viewfinderHeight,
@@ -156,17 +156,24 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                           )
                         ),
 
-                      // 3.3 边框
+                      // 3.3 边框 (拉伸填满)
                       if (framePath != null && framePath.isNotEmpty)
                         IgnorePointer(
                           child: Image.asset(framePath, fit: BoxFit.fill, width: double.infinity, height: double.infinity, errorBuilder: (c,e,s) => const SizedBox())
                         ),
 
-                      // 3.4 贴纸 (居中)
+                      // 3.4 贴纸 (✅ 固定在右下角，水印风格)
                       if (stickerPath != null && stickerPath.isNotEmpty)
-                        IgnorePointer(
-                          child: Center(
-                            child: Image.asset(stickerPath, width: 150, fit: BoxFit.contain, errorBuilder: (c,e,s) => const SizedBox()),
+                        Positioned(
+                          bottom: 30,
+                          right: 30,
+                          child: IgnorePointer(
+                            child: Image.asset(
+                              stickerPath, 
+                              width: 100, // 尺寸适中
+                              fit: BoxFit.contain, 
+                              errorBuilder: (c,e,s) => const SizedBox()
+                            ),
                           ),
                         ),
 
@@ -206,7 +213,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                       child: child,
                     );
                   },
-                  child: _buildBottomPanelContent(), // ✅ 这里调用了 _buildBottomPanelContent
+                  child: _buildBottomPanelContent(),
                 ),
               ),
             ),
@@ -217,7 +224,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   }
 
   // ==========================================
-  // 👇👇👇 下面这些就是之前被省略的方法，现在补全了 👇👇👇
+  // 组件构建方法
   // ==========================================
 
   Widget _buildTopBar() {
@@ -337,7 +344,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     } else { await _performCapture(); }
   }
 
-  // ✅ [核心逻辑] 拍照 -> 合成 -> 保存
+  // ✅ [核心] 拍照 + 效果合成 (贴纸在右下角)
   Future<void> _performCapture() async {
     setState(() => _isShooting = true);
     try {
@@ -369,8 +376,13 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
             if (framePath != null) 
                Image.asset(framePath, fit: BoxFit.fill),
                
+            // ✅ [一致性修复] 拍照合成时，贴纸也必须在右下角，与预览一致！
             if (stickerPath != null) 
-               Center(child: Image.asset(stickerPath, width: 150, fit: BoxFit.contain)),
+               Positioned(
+                 bottom: 40, // 略微放大一点点像素，适应大图，或者保持 30
+                 right: 40,
+                 child: Image.asset(stickerPath, width: 150, fit: BoxFit.contain)
+               ),
           ],
         );
 
